@@ -1,0 +1,778 @@
+/*
+ * Copyright (c) 2012 Google Inc. All rights reserved.
+ * Copyright (C) 2013 BlackBerry Limited. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ *
+ *     * Redistributions of source code must retain the above copyright
+ * notice, this list of conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above
+ * copyright notice, this list of conditions and the following disclaimer
+ * in the documentation and/or other materials provided with the
+ * distribution.
+ *     * Neither the name of Google Inc. nor the names of its
+ * contributors may be used to endorse or promote products derived from
+ * this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_FONTS_SHAPING_SHAPE_RESULT_RUN_H_
+#define THIRD_PARTY_BLINK_RENDERER_PLATFORM_FONTS_SHAPING_SHAPE_RESULT_RUN_H_
+
+#include <hb.h>
+
+#include <algorithm>
+#include <memory>
+#include <type_traits>
+
+#include "base/check_op.h"
+#include "base/compiler_specific.h"
+#include "base/containers/span.h"
+#include "base/gtest_prod_util.h"
+#include "third_party/blink/renderer/platform/fonts/shaping/glyph_data.h"
+#include "third_party/blink/renderer/platform/fonts/shaping/glyph_data_range.h"
+#include "third_party/blink/renderer/platform/fonts/shaping/glyph_index_result.h"
+#include "third_party/blink/renderer/platform/fonts/shaping/glyph_offset_iterator.h"
+#include "third_party/blink/renderer/platform/fonts/shaping/shape_result.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/vector.h"
+
+namespace blink {
+
+class SimpleFontData;
+
+struct PLATFORM_EXPORT ShapeResultRun final
+    : public GarbageCollected<ShapeResultRun> {
+ public:
+  ShapeResultRun(const SimpleFontData* font,
+                 hb_direction_t dir,
+                 CanvasRotationInVertical canvas_rotation,
+                 hb_script_t script,
+                 unsigned start_index,
+                 unsigned num_glyphs,
+                 unsigned num_characters)
+      : glyph_data_(
+            std::min(num_glyphs, HarfBuzzRunGlyphData::kMaxCharacterIndex + 1)),
+        font_data_(const_cast<SimpleFontData*>(font)),
+        start_index_(start_index),
+        num_characters_(num_characters),
+        width_(0.0f),
+        script_(script),
+        hb_direction_(dir),
+        canvas_rotation_(canvas_rotation) {}
+
+  ShapeResultRun(const ShapeResultRun& other)
+      : glyph_data_(other.glyph_data_),
+        font_data_(other.font_data_),
+        start_index_(other.start_index_),
+        num_characters_(other.num_characters_),
+        width_(other.width_),
+        script_(other.script_),
+        hb_direction_(other.hb_direction_),
+        canvas_rotation_(other.canvas_rotation_) {}
+
+  void Trace(Visitor* visitor) const {
+    visitor->Trace(glyph_data_);
+    visitor->Trace(font_data_);
+  }
+
+  unsigned NumCharacters() const { return num_characters_; }
+  float Width() const { return width_; }
+  unsigned NumGlyphs() const { return glyph_data_.size(); }
+  bool HasLigatures() const { return NumGlyphs() < num_characters_; }
+  hb_direction_t HbDirection() const {
+    return static_cast<hb_direction_t>(hb_direction_);
+  }
+  bool IsLtr() const { return HB_DIRECTION_IS_FORWARD(HbDirection()); }
+  bool IsRtl() const { return HB_DIRECTION_IS_BACKWARD(HbDirection()); }
+  bool IsHorizontal() const {
+    return HB_DIRECTION_IS_HORIZONTAL(HbDirection());
+  }
+  CanvasRotationInVertical CanvasRotation() const { return canvas_rotation_; }
+  unsigned NextSafeToBreakOffset(unsigned) const;
+  unsigned PreviousSafeToBreakOffset(unsigned) const;
+  float XPositionForVisualOffset(unsigned, AdjustMidCluster) const;
+  float XPositionForOffset(unsigned, AdjustMidCluster) const;
+  void CharacterIndexForXPosition(float,
+                                  BreakGlyphsOption,
+                                  GlyphIndexResult*) const;
+  void LimitNumGlyphs(unsigned start_glyph,
+                      unsigned* num_glyphs_in_out,
+                      unsigned* num_glyphs_removed_out,
+                      const bool is_ltr,
+                      const hb_glyph_info_t* glyph_infos);
+
+  unsigned StartIndex() const { return start_index_; }
+  unsigned GlyphToCharacterIndex(unsigned i) const {
+    return start_index_ + glyph_data_[i].character_index;
+  }
+
+  unsigned NumGraphemes(unsigned start, unsigned end) const;
+
+  // For memory reporting.
+  size_t ByteSize() const { return sizeof(*this) + glyph_data_.ByteSize(); }
+
+  // Find the range of HarfBuzzRunGlyphData for the specified character index
+  // range. This function uses binary search twice, hence O(2 log n).
+  GlyphDataRange FindGlyphDataRange(unsigned start_character_index,
+                                    unsigned end_character_index) const {
+    GlyphDataRange range = GetGlyphDataRange().FindGlyphDataRange(
+        IsRtl(), start_character_index, end_character_index);
+    return range;
+  }
+
+  // Creates a new ShapeResultRun instance representing a subset of the current
+  // run. Returns |nullptr| if there are no glyphs in the specified range.
+  ShapeResultRun* CreateSubRun(unsigned start, unsigned end) {
+    DCHECK(end > start);
+    unsigned number_of_characters = std::min(end - start, num_characters_);
+    auto glyphs = FindGlyphDataRange(start, end);
+    const unsigned number_of_glyphs = glyphs.size();
+    if (!number_of_glyphs) [[unlikely]] {
+      return nullptr;
+    }
+
+    auto* run = MakeGarbageCollected<ShapeResultRun>(
+        font_data_.Get(), HbDirection(), canvas_rotation_, script_,
+        start_index_ + start, number_of_glyphs, number_of_characters);
+
+    run->glyph_data_.CopyFromRange(glyphs);
+
+    InlineLayoutUnit total_advance;
+    for (HarfBuzzRunGlyphData& glyph_data : run->glyph_data_.MutableGlyphs()) {
+      glyph_data.character_index -= start;
+      total_advance += glyph_data.advance;
+    }
+
+    run->width_ = total_advance;
+    run->num_characters_ = number_of_characters;
+
+    return run;
+  }
+
+  // Returns new |ShapeResultRun| if |this| and |other| are merged. Otherwise
+  // returns null.
+  ShapeResultRun* MergeIfPossible(const ShapeResultRun& other) const {
+    if (!CanMerge(other)) {
+      return nullptr;
+    }
+    DCHECK_LT(start_index_, other.start_index_);
+    auto* run = MakeGarbageCollected<ShapeResultRun>(
+        font_data_.Get(), HbDirection(), canvas_rotation_, script_,
+        start_index_, glyph_data_.size() + other.glyph_data_.size(),
+        num_characters_ + other.num_characters_);
+    // Note: We populate grapheme data on demand, e.g. hit testing.
+    const int index_adjust = other.start_index_ - start_index_;
+    if (IsRtl()) [[unlikely]] {
+      run->glyph_data_.CopyFrom(other.glyph_data_, glyph_data_);
+      auto& merged_glyphs = run->glyph_data_.MutableGlyphs();
+      const unsigned num_glyphs_to_adjust = other.glyph_data_.size();
+      for (unsigned i = 0; i < num_glyphs_to_adjust; ++i) {
+        merged_glyphs[i].character_index += index_adjust;
+      }
+    } else {
+      run->glyph_data_.CopyFrom(glyph_data_, other.glyph_data_);
+      auto& merged_glyphs = run->glyph_data_.MutableGlyphs();
+      const unsigned first_glyph_to_adjust = glyph_data_.size();
+      for (unsigned i = first_glyph_to_adjust; i < merged_glyphs.size(); ++i) {
+        merged_glyphs[i].character_index += index_adjust;
+      }
+    }
+    run->width_ = width_ + other.width_;
+    return run;
+  }
+
+  // Returns true if |other| can be merged at end of |this|.
+  bool CanMerge(const ShapeResultRun& other) const {
+    return start_index_ + num_characters_ == other.start_index_ &&
+           canvas_rotation_ == other.canvas_rotation_ &&
+           font_data_ == other.font_data_ &&
+           hb_direction_ == other.hb_direction_ && script_ == other.script_ &&
+           glyph_data_.size() + other.glyph_data_.size() <
+               HarfBuzzRunGlyphData::kMaxCharacterIndex + 1;
+  }
+
+  void ExpandRangeToIncludePartialGlyphs(int offset, int* from, int* to) const {
+    const auto& glyphs = glyph_data_.NonCompactGlyphs();
+    int end = offset + num_characters_;
+    int start;
+
+    if (IsLtr()) {
+      start = offset + num_characters_;
+      for (const HarfBuzzRunGlyphData& glyph : glyphs) {
+        int index = offset + glyph.character_index;
+        if (start == index) {
+          continue;
+        }
+        end = index;
+        if (end > *from && start < *to) {
+          *from = std::min(*from, start);
+          *to = std::max(*to, end);
+        }
+        end = offset + num_characters_;
+        start = index;
+      }
+    } else {
+      start = offset + num_characters_;
+      for (const HarfBuzzRunGlyphData& glyph : glyphs) {
+        int index = offset + glyph.character_index;
+        if (start == index) {
+          continue;
+        }
+        if (end > *from && start < *to) {
+          *from = std::min(*from, start);
+          *to = std::max(*to, end);
+        }
+        end = start;
+        start = index;
+      }
+    }
+
+    if (end > *from && start < *to) {
+      *from = std::min(*from, start);
+      *to = std::max(*to, end);
+    }
+  }
+
+  // Common signatures with RunInfoPart, to templatize algorithms.
+  const ShapeResultRun* GetRunInfo() const { return this; }
+  GlyphDataRange GetGlyphDataRange() const { return GlyphDataRange{*this}; }
+  unsigned OffsetToRunStartIndex() const { return 0; }
+
+  // Collection of |HarfBuzzRunGlyphData| with optional glyph offset
+  class GlyphDataCollection final {
+    DISALLOW_NEW();
+
+   private:
+    // Compact run: 16-bit glyph ids with one shared advance.
+    struct CompactGlyphData final : public GarbageCollected<CompactGlyphData> {
+      CompactGlyphData(TextRunLayoutUnit shared_advance, unsigned num_glyphs)
+          : advance(shared_advance), glyphs(num_glyphs) {}
+      void Trace(Visitor* visitor) const { visitor->Trace(glyphs); }
+
+#if DCHECK_IS_ON()
+      bool operator==(const CompactGlyphData& other) const {
+        return advance == other.advance && glyphs == other.glyphs;
+      }
+#endif
+
+      TextRunLayoutUnit advance;
+      HeapVector<uint16_t> glyphs;
+    };
+
+    class RareData final : public GarbageCollected<RareData> {
+     public:
+      void Trace(Visitor* visitor) const {
+        visitor->Trace(offsets_);
+        visitor->Trace(graphemes_);
+      }
+
+      // `offsets_[i]` is the glyph offset for `data_[i]`.
+      Member<GCedHeapVector<GlyphOffset>> offsets_;
+      // `graphemes_[i]` is the number of graphemes up to and including the
+      // ith character in the run.
+      Member<GCedHeapVector<unsigned>> graphemes_;
+    };
+
+   public:
+    explicit GlyphDataCollection(unsigned num_glyphs) : data_(num_glyphs) {}
+
+    // Offsets are mutable; compact storage is immutable and shared.
+    GlyphDataCollection(const GlyphDataCollection& other)
+        : data_(other.data_), compact_(other.compact_) {
+      // Always deep copy offsets, as they are generally modified after copying.
+      if (other.HasNonZeroOffsets()) {
+        EnsureRareData();
+        rare_data_->offsets_ =
+            MakeGarbageCollected<GCedHeapVector<GlyphOffset>>(
+                other.OffsetsVector()->size());
+        std::ranges::copy(*other.OffsetsVector(),
+                          rare_data_->offsets_->begin());
+      }
+      if (other.HasGraphemes()) {
+        EnsureRareData();
+        rare_data_->graphemes_ = other.rare_data_->graphemes_;
+      }
+    }
+
+    // Compact storage implies identity indices and safe breaks.
+    bool IsCompact() const { return CompactData() != nullptr; }
+
+    unsigned size() const {
+      const CompactGlyphData* compact = CompactData();
+      return compact ? compact->glyphs.size() : data_.size();
+    }
+    bool IsEmpty() const { return data_.empty() && !IsCompact(); }
+
+    TextRunLayoutUnit CompactAdvance() const {
+      CHECK(IsCompact());
+      return CompactData()->advance;
+    }
+
+    base::span<const uint16_t> CompactGlyphs(unsigned start,
+                                             unsigned count) const {
+      CHECK(IsCompact());
+      return base::span<const uint16_t>(CompactData()->glyphs)
+          .subspan(start, count);
+    }
+
+    HarfBuzzRunGlyphData GlyphAt(unsigned index) const {
+      if (IsCompact()) [[unlikely]] {
+        return GetCompact(index);
+      }
+      return data_[index];
+    }
+
+    const HarfBuzzRunGlyphData& operator[](unsigned index) const {
+      return data_[index];
+    }
+    HarfBuzzRunGlyphData& MutableGlyphAt(unsigned index) {
+      Materialize();
+      return data_[index];
+    }
+    const HeapVector<HarfBuzzRunGlyphData>& NonCompactGlyphs() const {
+      CHECK(!IsCompact());
+      return data_;
+    }
+
+    HeapVector<HarfBuzzRunGlyphData>& MutableGlyphs() {
+      Materialize();
+      return data_;
+    }
+
+    bool HasNonZeroOffsets() const { return OffsetsVector(); }
+    bool HasGraphemes() const { return Graphemes(); }
+
+    const GCedHeapVector<unsigned>* Graphemes() const {
+      return rare_data_ ? rare_data_->graphemes_.Get() : nullptr;
+    }
+    GCedHeapVector<unsigned>* Graphemes() {
+      return rare_data_ ? rare_data_->graphemes_.Get() : nullptr;
+    }
+    void SetGraphemes(GCedHeapVector<unsigned>* graphemes) {
+      DCHECK(graphemes);
+      EnsureRareData();
+      rare_data_->graphemes_ = graphemes;
+    }
+
+    size_t ByteSize() const {
+      size_t bytes =
+          sizeof(*this) + data_.size() * sizeof(HarfBuzzRunGlyphData);
+      if (HasNonZeroOffsets()) {
+        bytes += OffsetsVector()->size() * sizeof(GlyphOffset);
+      }
+      if (const CompactGlyphData* compact = CompactData()) {
+        bytes += sizeof(CompactGlyphData) +
+                 compact->glyphs.size() * sizeof(uint16_t);
+      }
+      return bytes;
+    }
+
+    // The `span` of `GlyphOffset` if `HasNonZeroOffsets()`, or an empty span.
+    base::span<const GlyphOffset> Offsets() const {
+      const auto* offsets = OffsetsVector();
+      return offsets ? base::span<const GlyphOffset>(*offsets)
+                     : base::span<const GlyphOffset>();
+    }
+    base::span<GlyphOffset> Offsets() {
+      auto* offsets = OffsetsVector();
+      return offsets ? base::span<GlyphOffset>(*offsets)
+                     : base::span<GlyphOffset>();
+    }
+
+    template <bool kHasNonZeroGlyphOffsets>
+    GlyphOffsetIterator<kHasNonZeroGlyphOffsets> GetOffsets() const {
+      return GlyphOffsetIterator<kHasNonZeroGlyphOffsets>(Offsets());
+    }
+
+    // Note: Caller should be adjust |HarfBuzzRunGlyphData.character_index|.
+    void CopyFrom(const GlyphDataCollection& other1,
+                  const GlyphDataCollection& other2) {
+      const unsigned first_size = other1.size();
+      const unsigned second_size = other2.size();
+      SECURITY_CHECK(size() == first_size + second_size);
+      DCHECK(!other1.IsEmpty());
+      DCHECK(!other2.IsEmpty());
+      auto [first_glyphs, second_glyphs] =
+          base::span<HarfBuzzRunGlyphData>(data_).split_at(first_size);
+      first_glyphs.copy_from(other1.data_);
+      second_glyphs.copy_from(other2.data_);
+
+      if (other1.HasNonZeroOffsets()) {
+        AllocateOffsetsIfNeeded();
+        Offsets().first(first_size).copy_from(other1.Offsets());
+      }
+      if (other2.HasNonZeroOffsets()) {
+        AllocateOffsetsIfNeeded();
+        Offsets().subspan(first_size, second_size).copy_from(other2.Offsets());
+      }
+    }
+
+    // Note: Caller should be adjust |HarfBuzzRunGlyphData.character_index|.
+    void CopyFromRange(const GlyphDataRange& range) {
+      CHECK_EQ(range.size(), size());
+      range.ExpandInto(data_);
+
+      if (!range.HasOffsets() || range.IsEmpty()) {
+        ClearOffsets();
+      } else {
+        AllocateOffsets();
+        Offsets().copy_from(range.Offsets());
+      }
+    }
+
+    NOINLINE void AddOffsetHeightAt(unsigned index, float delta) {
+      DCHECK_NE(delta, 0.0f);
+      AllocateOffsetsIfNeeded();
+      base::span<GlyphOffset> offsets = Offsets();
+      offsets[index].set_y(offsets[index].y() + delta);
+    }
+
+    NOINLINE void AddOffsetWidthAt(unsigned index, float delta) {
+      DCHECK_NE(delta, 0.0f);
+      AllocateOffsetsIfNeeded();
+      base::span<GlyphOffset> offsets = Offsets();
+      offsets[index].set_x(offsets[index].x() + delta);
+    }
+
+    void SetOffsetAt(unsigned index, GlyphOffset offset) {
+      if (!HasNonZeroOffsets() && offset.IsZero()) {
+        return;
+      }
+      AllocateOffsetsIfNeeded();
+      Offsets()[index] = offset;
+    }
+
+    void Reverse() {
+      std::ranges::reverse(MutableGlyphs());
+      if (HasNonZeroOffsets()) {
+        OffsetsVector()->Reverse();
+      }
+    }
+
+    void Shrink(unsigned new_size) {
+      DCHECK_GE(new_size, 1u);
+      // Note: To follow Vector<T>::Shrink(), we accept |new_size == size()|
+      if (new_size == size()) {
+        return;
+      }
+      DCHECK_LT(new_size, size());
+      // Materialize before mutating shared compact storage.
+      Materialize();
+      data_.Shrink(new_size);
+      if (HasNonZeroOffsets()) {
+        OffsetsVector()->Shrink(new_size);
+      }
+    }
+
+#if DCHECK_IS_ON()
+    bool operator==(const GlyphDataCollection& other) const {
+      if (!base::ValuesEquivalent(OffsetsVector(), other.OffsetsVector()) ||
+          !base::ValuesEquivalent(Graphemes(), other.Graphemes())) {
+        return false;
+      }
+      if (IsCompact() && other.IsCompact()) {
+        return base::ValuesEquivalent(CompactData(), other.CompactData());
+      }
+      const unsigned num_glyphs = size();
+      if (num_glyphs != other.size()) {
+        return false;
+      }
+      for (unsigned i = 0; i < num_glyphs; ++i) {
+        if (!(GlyphAt(i) == other.GlyphAt(i))) {
+          return false;
+        }
+      }
+      return true;
+    }
+#endif
+
+    void Trace(Visitor* visitor) const {
+      visitor->Trace(data_);
+      visitor->Trace(rare_data_);
+      visitor->Trace(compact_);
+    }
+
+    struct CompactableGlyph {
+      uint16_t glyph;
+      TextRunLayoutUnit advance;
+      unsigned character_index;
+      bool has_offset;
+      bool is_safe_to_break_before;
+    };
+
+    template <typename GlyphAt>
+    bool TryMakeCompactFrom(unsigned num_glyphs, const GlyphAt& at) {
+      if (num_glyphs < kMinGlyphsToCompact ||
+          num_glyphs > HarfBuzzRunGlyphData::kMaxGlyphs) {
+        return false;
+      }
+      const TextRunLayoutUnit advance = at(0).advance;
+      for (unsigned i = 0; i < num_glyphs; ++i) {
+        const CompactableGlyph glyph = at(i);
+        if (glyph.character_index != i || glyph.advance != advance ||
+            glyph.has_offset || !glyph.is_safe_to_break_before) {
+          return false;
+        }
+      }
+      auto* compact =
+          MakeGarbageCollected<CompactGlyphData>(advance, num_glyphs);
+      const base::span<uint16_t> ids = compact->glyphs;
+      for (unsigned i = 0; i < num_glyphs; ++i) {
+        ids[i] = at(i).glyph;
+      }
+      SetCompact(compact);
+      return true;
+    }
+
+    bool TryMakeCompact() {
+      if (IsCompact()) {
+        return true;
+      }
+      if (HasNonZeroOffsets()) {
+        return false;
+      }
+      return TryMakeCompactFrom(data_.size(), [this](unsigned i) {
+        const HarfBuzzRunGlyphData& glyph = data_[i];
+        return CompactableGlyph{
+            .glyph = glyph.glyph,
+            .advance = glyph.advance,
+            .character_index = glyph.character_index,
+            .has_offset = false,
+            .is_safe_to_break_before = glyph.IsSafeToBreakBefore()};
+      });
+    }
+
+   private:
+    FRIEND_TEST_ALL_PREFIXES(ShapeResultRunTest,
+                             CompactCopyMaterializesIndependently);
+
+    void Materialize() {
+      if (IsCompact()) [[unlikely]] {
+        MaterializeSlow();
+      }
+    }
+
+    static constexpr unsigned kMinGlyphsToCompact = 8;
+
+    void SetCompact(CompactGlyphData* compact) {
+      CHECK(compact);
+      CHECK(!compact->glyphs.empty());
+      CHECK_LE(compact->glyphs.size(), HarfBuzzRunGlyphData::kMaxGlyphs);
+      compact_ = compact;
+      data_.clear();
+      ClearOffsets();
+    }
+
+    // Avoid `resize()`'s geometric capacity growth for fixed-size runs.
+    void ResizeDataExactly(unsigned num_glyphs) {
+      data_.reserve(num_glyphs);
+      data_.resize(num_glyphs);
+    }
+
+    NOINLINE HarfBuzzRunGlyphData GetCompact(unsigned index) const {
+      CHECK(IsCompact());
+      const CompactGlyphData& compact = *CompactData();
+      return HarfBuzzRunGlyphData(compact.glyphs[index], index,
+                                  SafeToBreak::kSafe, compact.advance);
+    }
+
+    NOINLINE void ExpandCompactInto(
+        unsigned start,
+        base::span<HarfBuzzRunGlyphData> dest) const {
+      CHECK(IsCompact());
+      const CompactGlyphData& compact = *CompactData();
+      CHECK_LE(start, compact.glyphs.size());
+      CHECK_LE(dest.size(), compact.glyphs.size() - start);
+      const TextRunLayoutUnit advance = compact.advance;
+      const base::span<const uint16_t> glyphs =
+          base::span<const uint16_t>(compact.glyphs)
+              .subspan(start, dest.size());
+      for (unsigned i = 0; i < glyphs.size(); ++i) {
+        dest[i] = HarfBuzzRunGlyphData(glyphs[i], start + i, SafeToBreak::kSafe,
+                                       advance);
+      }
+    }
+
+    NOINLINE void MaterializeSlow() {
+      CHECK(IsCompact());
+      const unsigned num_glyphs = CompactData()->glyphs.size();
+      CHECK(data_.empty());
+      ResizeDataExactly(num_glyphs);
+      ExpandCompactInto(0, base::span<HarfBuzzRunGlyphData>(data_));
+      ClearCompact();
+    }
+
+    void AllocateOffsets() {
+      DCHECK_GE(size(), 1u);
+      DCHECK(!HasNonZeroOffsets());
+      EnsureRareData();
+      rare_data_->offsets_ =
+          MakeGarbageCollected<GCedHeapVector<GlyphOffset>>(size());
+    }
+
+    void AllocateOffsetsIfNeeded() {
+      if (!HasNonZeroOffsets()) {
+        AllocateOffsets();
+      }
+    }
+
+    const GCedHeapVector<GlyphOffset>* OffsetsVector() const {
+      return rare_data_ ? rare_data_->offsets_.Get() : nullptr;
+    }
+    GCedHeapVector<GlyphOffset>* OffsetsVector() {
+      return rare_data_ ? rare_data_->offsets_.Get() : nullptr;
+    }
+    void ClearOffsets() {
+      if (!rare_data_) {
+        return;
+      }
+      rare_data_->offsets_ = nullptr;
+      ClearRareDataIfEmpty();
+    }
+    const CompactGlyphData* CompactData() const { return compact_.Get(); }
+    void ClearCompact() { compact_ = nullptr; }
+    void EnsureRareData() {
+      if (!rare_data_) {
+        rare_data_ = MakeGarbageCollected<RareData>();
+      }
+    }
+    void ClearRareDataIfEmpty() {
+      if (rare_data_ && !rare_data_->offsets_ && !rare_data_->graphemes_) {
+        rare_data_ = nullptr;
+      }
+    }
+
+    HeapVector<HarfBuzzRunGlyphData> data_;
+    // Most runs need neither offsets nor grapheme data.
+    Member<RareData> rare_data_;
+    Member<CompactGlyphData> compact_;
+  };
+
+#if DCHECK_IS_ON()
+  bool operator==(const ShapeResultRun& other) const {
+    // We can't check that `script_` is the same due to our 8-bit string
+    // optimization for segmentation. See: `InlineNode::SegmentScriptRuns`.
+    // Allow HB_SCRIPT_COMMON and HB_SCRIPT_LATIN to be equivalent.
+    const bool script_equivalent = ([&]() {
+      if (script_ == other.script_) {
+        return true;
+      }
+      if (script_ == HB_SCRIPT_COMMON && other.script_ == HB_SCRIPT_LATIN) {
+        return true;
+      }
+      if (script_ == HB_SCRIPT_LATIN && other.script_ == HB_SCRIPT_COMMON) {
+        return true;
+      }
+      return false;
+    })();
+
+    return glyph_data_ == other.glyph_data_ && font_data_ == other.font_data_ &&
+           start_index_ == other.start_index_ &&
+           num_characters_ == other.num_characters_ && width_ == other.width_ &&
+           script_equivalent && hb_direction_ == other.hb_direction_ &&
+           canvas_rotation_ == other.canvas_rotation_;
+  }
+
+  void CheckConsistency() const {
+    if (glyph_data_.IsCompact()) {
+      CHECK_LE(glyph_data_.size(), num_characters_);
+      return;
+    }
+    for (const HarfBuzzRunGlyphData& glyph : glyph_data_.NonCompactGlyphs()) {
+      DCHECK_LT(glyph.character_index, num_characters_);
+    }
+  }
+#endif
+
+ private:
+  friend class GlyphDataRange;
+  friend class HarfBuzzShaper;
+  friend class ShapeResult;
+  friend class ShapeResultCursor;
+  friend class ShapeResultTest;
+  friend class ShapeResultTestInfo;
+  friend class ShapeResultView;
+  friend class ShapeResultRunTest;
+  FRIEND_TEST_ALL_PREFIXES(GlyphDataRangeTest, Data);
+  FRIEND_TEST_ALL_PREFIXES(ShapeResultCursorTest, Ltr);
+  FRIEND_TEST_ALL_PREFIXES(ShapeResultCursorTest, Rtl);
+  FRIEND_TEST_ALL_PREFIXES(ShapeResultRunTest,
+                           FixedPitchDoesNotGuaranteeConstantAdvances);
+  FRIEND_TEST_ALL_PREFIXES(ShapeResultRunTest, GlyphDataCopyConstructor);
+  FRIEND_TEST_ALL_PREFIXES(ShapeResultRunTest, GlyphDataCopyFromRange);
+  FRIEND_TEST_ALL_PREFIXES(ShapeResultRunTest, GlyphDataReverse);
+  FRIEND_TEST_ALL_PREFIXES(ShapeResultRunTest, GlyphDataAddOffsetHeightAt);
+  FRIEND_TEST_ALL_PREFIXES(ShapeResultRunTest, GlyphDataAddOffsetWidthAt);
+  FRIEND_TEST_ALL_PREFIXES(ShapeResultRunTest, GlyphDataSetAt);
+  FRIEND_TEST_ALL_PREFIXES(ShapeResultRunTest, GlyphDataShrink);
+  FRIEND_TEST_ALL_PREFIXES(ShapeResultRunTest,
+                           CompactHitTestingUsesFixedPointPositions);
+  FRIEND_TEST_ALL_PREFIXES(ShapeResultRunTest,
+                           CompactHitTestingAfterMaterialization);
+  FRIEND_TEST_ALL_PREFIXES(ShapeResultRunTest, CompactEmptyGlyphRangeKeepsRun);
+  FRIEND_TEST_ALL_PREFIXES(ShapeResultRunTest,
+                           CompactRejectsOversizedInputBeforeReading);
+  FRIEND_TEST_ALL_PREFIXES(ShapeResultRunTest,
+                           CompactReaderMatchesGlyphAtForSubRange);
+  FRIEND_TEST_ALL_PREFIXES(ShapeResultRunTest,
+                           RangeSurvivesRepresentationChanges);
+  FRIEND_TEST_ALL_PREFIXES(ShapeResultRunTest,
+                           NestedCompactRangesMatchFullStorage);
+  FRIEND_TEST_ALL_PREFIXES(ShapeResultRunTest,
+                           CompactEqualityDoesNotMaterialize);
+  FRIEND_TEST_ALL_PREFIXES(ShapeResultRunTest,
+                           CompactCopyMaterializesIndependently);
+  FRIEND_TEST_ALL_PREFIXES(ShapeResultRunTest,
+                           CompactCharacterIndexCorrectsFloatRounding);
+  FRIEND_TEST_ALL_PREFIXES(ShapeResultRunTest,
+                           CompactReadShortcutsDoNotMaterialize);
+  FRIEND_TEST_ALL_PREFIXES(ShapeResultRunTest,
+                           CompactTrailingCharactersMatchFullStorage);
+  FRIEND_TEST_ALL_PREFIXES(ShapeResultRunTest,
+                           CompactZeroOffsetDoesNotMaterialize);
+
+  GlyphDataCollection glyph_data_;
+  Member<SimpleFontData> font_data_;
+
+  unsigned start_index_;
+  unsigned num_characters_;
+  float width_;
+
+  hb_script_t script_;
+  uint8_t hb_direction_;  // hb_direction_t
+
+  // For upright-in-vertical we need to tell the ShapeResultBloberizer to rotate
+  // the canvas back 90deg for this ShapeResultRun.
+  CanvasRotationInVertical canvas_rotation_;
+};
+
+static_assert(std::is_trivially_destructible_v<ShapeResultRun>);
+
+inline GlyphDataRange::Reader::Reader(const GlyphDataRange& range) {
+  if (range.run_) {
+    glyphs_ = base::span<const HarfBuzzRunGlyphData>(
+                  range.run_->glyph_data_.NonCompactGlyphs())
+                  .subspan(range.index_, range.size_);
+  }
+}
+
+inline GlyphDataRange::Reader::Reader(const ShapeResultRun& run)
+    : glyphs_(run.glyph_data_.NonCompactGlyphs()) {}
+
+}  // namespace blink
+
+#endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_FONTS_SHAPING_SHAPE_RESULT_RUN_H_
