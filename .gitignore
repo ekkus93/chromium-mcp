@@ -352,3 +352,6 @@ third_party/rust/target/
 
 # Trace files created when using --trace-startup.
 **/chrometrace.log
+
+run_codex*.sh*
+*~
