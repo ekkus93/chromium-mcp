@@ -1,6 +1,6 @@
 # Chromium MCP Agent Browser Test Plan
 
-Status: Phase 0 stub  
+Status: Protocol tests pass; rerun browser integration after the latest native hook changes
 Companion spec: `docs/CHROMIUM_MCP_AGENT_BROWSER_SPEC.md`  
 Canonical TODO: `docs/CHROMIUM_MCP_AGENT_BROWSER_TODO.md`
 
@@ -13,54 +13,72 @@ Planned layers:
 
 1. Documentation checks.
 2. Protocol schema validation.
-3. MCP sidecar unit tests.
-4. Sidecar integration tests against a fake browser-agent service.
-5. Chromium C++ unit tests for policy, redaction, audit, and handle logic.
-6. Chromium browser tests for tabs, navigation, WebContents integration,
-   permissions, dialogs, downloads/uploads, and UI approvals.
-7. Deterministic local fixture E2E tests for full agent flows.
+3. Chromium C++ unit tests for MCP parsing, browser registries, and native API adapters.
+4. Chromium browser tests for tabs, navigation, WebContents integration,
+   permissions, dialogs, downloads/uploads, and native API behavior.
+5. Deterministic local MCP client tests against browser fixtures.
 
 ## Local Chromium build entry points
 
 No repository-specific GN args are committed yet. Use normal Chromium setup and
 configure a local output directory.
 
-Common Linux commands:
+On this development host, pin each Chromium build and browser run to one CPU
+core, and keep Ninja to one local job. Do not start a build while the CPU is
+already hot or another compile is active. Common Linux commands:
 
 ```sh
 gn gen out/Default
 gn args out/Default
-autoninja -C out/Default chrome
+taskset -c 0 env PATH=/home/phil/depot_tools:$PATH \
+  autoninja --fast_local -j1 -C out/Default chrome
 ```
 
 Initial broad test targets:
 
 ```sh
-autoninja -C out/Default unit_tests
-autoninja -C out/Default browser_tests
-out/Default/unit_tests --gtest_filter='*Agent*'
-out/Default/browser_tests --gtest_filter='*Agent*'
+taskset -c 0 autoninja -j1 -C out/Default unit_tests
+taskset -c 0 autoninja -j1 -C out/Default browser_tests
+taskset -c 0 out/Default/unit_tests --gtest_filter='*Agent*'
+taskset -c 0 out/Default/browser_tests --gtest_filter='*Agent*'
 ```
 
-The `*Agent*` filters are forward-looking placeholders until Phase 1 creates the
-first agent test suites.
+The `*Agent*` filters select the browser-agent test suites.
 
-## Future sidecar test entry points
+## MCP endpoint test entry points
 
-Phase 3 should add `mcp-sidecar/` with package-level commands such as:
+Protocol schema checks run from `agent_protocol/`:
 
 ```sh
+cd agent_protocol
+npm ci
 npm test
-npm run lint
-npm run build
 ```
 
-or equivalent commands if the sidecar implementation language is not TypeScript.
-The implementation language decision must update this file.
+The endpoint integration check launches a built headless browser and verifies
+discovery, authentication, origin/header rejection, regular and private
+contexts, stale handles, navigation waits, main-world evaluation in the main
+frame and an iframe, regular/private cookie read/write, native click, hover,
+checkbox and typing input, element focus and option selection, native
+accessibility snapshots, visible content, console messages, MCP screenshots,
+authenticated server event streams for tab and popup creation/closure and
+navigation,
+regular/private geolocation content setting isolation, locale, user-agent and
+viewport emulation, page and native context storage operations, file input
+selection, prompts and beforeunload dialogs, registered content settings,
+combined OS/device permission status, navigation and resource events including
+subresource request/response headers and bodies, HTTP cache clearing, native tracing,
+optional audit logging, and download completion,
+cancellation, and terminal-state waits:
+
+```sh
+cd agent_protocol
+taskset -c 0 env CHROME_BIN=../out/Default/chrome npm run test:chromium
+```
 
 ## Required fixture coverage
 
-The Phase 23 fixture server should include deterministic local pages for:
+The Phase 6 fixture server should include deterministic local pages for:
 
 - simple navigation;
 - search form;
@@ -78,35 +96,35 @@ The Phase 23 fixture server should include deterministic local pages for:
 
 ## Core acceptance tests by feature area
 
-- Page modes: `MANUAL` blocks mutating actions; `SENSITIVE` blocks observation
-  and mutation beyond minimal safe metadata.
-- Policy engine: every mutating action passes through policy and records the
-  applied rules.
-- Sensitive classifier: password values, OTP fields, payment fields, login
-  submissions, and account-change submissions fail closed or require approval.
-- Locators: role, label, text, placeholder, CSS, and XPath locators resolve on
-  fixture pages; ambiguous locators fail safely with safe suggestions.
-- Actions: click, fill, type, press, select, check, and uncheck operate through
-  browser-mediated input paths, not raw DOM mutation.
-- Audit: allowed and denied calls are logged; redaction happens before
-  persistence/export.
-- Trace: traces include action, policy, navigation, dialog, download/upload, and
-  optional screenshot/accessibility events without leaking sensitive values.
-- Filesystem crossing: uploads and downloads use approved handles only; raw
-  filesystem paths from MCP arguments are rejected.
-- Sidecar authentication: unauthenticated local clients are rejected.
+- Endpoint: standard MCP discovery/list/call flows work; cross-origin browser
+  requests and unauthenticated local callers fail.
+- Native control: tab lifecycle, navigation, evaluation, input, accessibility,
+  downloads/uploads, permissions, storage, and network tools invoke Chromium
+  APIs directly, without CDP.
+- Tool access: the authenticated caller can use every documented tool; no
+  agent-specific allowlist or approval gate blocks browser operations.
+- Errors: malformed arguments, stale handles, timeouts, and native Chromium or
+  OS errors produce useful MCP errors.
+- Optional audit/trace: recording reflects operations without changing or
+  redacting their results.
 
-## Current CI capacity
+## Local validation
 
-At Phase 0, `.github/workflows/` contains only `close-pull-request.yml`. There
-is no active validation workflow for docs, sidecar tests, protocol schemas,
-Chromium unit tests, browser tests, or E2E fixtures yet.
-
-Phase 25 must add CI jobs for the implemented layers. Until that lands, every
-commit should document local validation status in the commit message or follow-up
-handoff notes.
+This project does not configure a GitHub Actions workflow. Run protocol and
+browser integration checks locally with the commands above. Keep Chromium build
+and browser test processes pinned to one CPU core on this development host.
 
 ## Phase 0 validation
 
-This documentation-only Phase 0 slice is validated by repository inspection and
+The documentation-only Phase 0 slice was validated by repository inspection and
 manual review. No automated CI check currently proves it.
+
+## Phase 1 validation
+
+`//chrome/browser/agent:unit_tests` covers the feature and explicit-switch gate,
+artifact path parsing and service shutdown. Build and run it through the regular Chromium unit test target:
+
+```sh
+taskset -c 0 autoninja -j1 -C out/Default unit_tests
+taskset -c 0 out/Default/unit_tests --gtest_filter='BrowserAgentServiceTest.*'
+```

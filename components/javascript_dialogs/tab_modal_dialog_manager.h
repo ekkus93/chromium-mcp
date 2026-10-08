@@ -6,6 +6,8 @@
 #define COMPONENTS_JAVASCRIPT_DIALOGS_TAB_MODAL_DIALOG_MANAGER_H_
 
 #include <memory>
+#include <optional>
+#include <string>
 
 #include "base/functional/callback_forward.h"
 #include "base/memory/advanced_memory_safety_checks.h"
@@ -104,6 +106,14 @@ class TabModalDialogManager
   void BrowserActiveStateChanged();
   void CloseDialogWithReason(DismissalCause reason);
 
+  struct ActiveDialogInfo {
+    content::JavaScriptDialogType type;
+    std::u16string title;
+    std::u16string message;
+    std::u16string default_prompt;
+  };
+  std::optional<ActiveDialogInfo> GetActiveDialogInfo() const;
+
   void SetDialogShownCallbackForTesting(base::OnceClosure callback);
   bool IsShowingDialogForTesting() const;
   const std::u16string& GetDialogTitleForTesting() const {
@@ -200,6 +210,8 @@ class TabModalDialogManager
 
   // The title of the dialog being displayed.
   std::u16string dialog_title_;
+  std::u16string dialog_message_;
+  std::u16string dialog_default_prompt_;
 
   // A closure to be fired when a dialog is dismissed. For testing only.
   DialogDismissedCallback dialog_dismissed_;

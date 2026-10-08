@@ -59,6 +59,8 @@
 #include "chrome/browser/accessibility/caption_settings_dialog.h"
 #include "chrome/browser/actor/actor_commit_deferring_condition.h"
 #include "chrome/browser/after_startup_task_utils.h"
+#include "chrome/browser/agent/browser_agent_network_throttle.h"
+#include "chrome/browser/agent/browser_agent_service_factory.h"
 #include "chrome/browser/ai/ai_manager.h"
 #include "chrome/browser/app_mode/app_mode_utils.h"
 #include "chrome/browser/back_forward_cache/back_forward_cache_util.h"
@@ -4062,7 +4064,8 @@ GetPreferredColorScheme(const WebPreferences& web_prefs,
 #else  // !BUILDFLAG(IS_ANDROID)
   Profile* profile =
       Profile::FromBrowserContext(web_contents->GetBrowserContext());
-  if (profile->IsEnterpriseIsolatedModeProfile() && !security_principal.IsWebUI()) {
+  if (profile->IsEnterpriseIsolatedModeProfile() &&
+      !security_principal.IsWebUI()) {
     preferred_color_scheme = blink::mojom::PreferredColorScheme::kLight;
   } else if (profile->IsIncognitoProfile() && !security_principal.IsWebUI()) {
     // Incognito contents follow the device color mode.
@@ -6205,6 +6208,17 @@ ChromeContentBrowserClient::CreateURLLoaderThrottles(
   if (auto glic_throttle = glic::GlicURLLoaderThrottle::MaybeCreate(
           browser_context, wc_getter, frame_tree_node_id, request)) {
     result.push_back(std::move(glic_throttle));
+  }
+
+  if (auto* agent_service =
+          browser_agent::BrowserAgentServiceFactory::GetForProfile(profile)) {
+    auto event_callback =
+        agent_service->CreateNetworkEventCallback(wc_getter.Run());
+    if (event_callback) {
+      result.push_back(
+          std::make_unique<browser_agent::BrowserAgentNetworkThrottle>(
+              std::move(event_callback)));
+    }
   }
 
   return result;

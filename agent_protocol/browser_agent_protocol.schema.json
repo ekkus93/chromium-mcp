@@ -1,0 +1,142 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://chromium-mcp.invalid/schemas/browser_agent_protocol.schema.json",
+  "title": "Chromium Embedded MCP Messages",
+  "description": "MCP JSON-RPC requests handled directly by Chromium.",
+  "oneOf": [
+    { "$ref": "#/definitions/discover_request" },
+    { "$ref": "#/definitions/tools_list_request" },
+    { "$ref": "#/definitions/tools_call_request" },
+    { "$ref": "#/definitions/resources_list_request" },
+    { "$ref": "#/definitions/resources_read_request" },
+    { "$ref": "#/definitions/jsonrpc_response" }
+  ],
+  "definitions": {
+    "request_id": { "oneOf": [{ "type": "string" }, { "type": "number" }] },
+    "jsonrpc": { "type": "string", "const": "2.0" },
+    "request_meta": {
+      "type": "object",
+      "required": ["io.modelcontextprotocol/protocolVersion"],
+      "properties": {
+        "io.modelcontextprotocol/protocolVersion": { "const": "2026-07-28" },
+        "io.modelcontextprotocol/clientInfo": { "type": "object" },
+        "io.modelcontextprotocol/clientCapabilities": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    "base_request": {
+      "type": "object",
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "$ref": "#/definitions/jsonrpc" },
+        "id": { "$ref": "#/definitions/request_id" },
+        "params": {
+          "type": "object",
+          "required": ["_meta"],
+          "properties": { "_meta": { "$ref": "#/definitions/request_meta" } }
+        }
+      }
+    },
+    "discover_request": {
+      "allOf": [
+        { "$ref": "#/definitions/base_request" },
+        {
+          "type": "object",
+          "properties": {
+            "method": { "const": "server/discover" },
+            "params": {
+              "type": "object",
+              "required": ["_meta"],
+              "properties": { "_meta": { "$ref": "#/definitions/request_meta" } }
+            }
+          }
+        }
+      ]
+    },
+    "tools_list_request": {
+      "allOf": [
+        { "$ref": "#/definitions/base_request" },
+        {
+          "type": "object",
+          "properties": {
+            "method": { "const": "tools/list" },
+            "params": {
+              "type": "object",
+              "required": ["_meta"],
+              "properties": { "_meta": { "$ref": "#/definitions/request_meta" } }
+            }
+          }
+        }
+      ]
+    },
+    "tools_call_request": {
+      "allOf": [
+        { "$ref": "#/definitions/base_request" },
+        {
+          "type": "object",
+          "required": ["params"],
+          "properties": {
+            "method": { "const": "tools/call" },
+            "params": {
+              "type": "object",
+              "required": ["name"],
+              "properties": {
+                "name": { "type": "string", "minLength": 1 },
+                "arguments": { "type": "object" },
+                "_meta": { "$ref": "#/definitions/request_meta" }
+              },
+              "additionalProperties": true
+            }
+          }
+        }
+      ]
+    },
+    "resources_list_request": {
+      "allOf": [
+        { "$ref": "#/definitions/base_request" },
+        {
+          "type": "object",
+          "properties": { "method": { "const": "resources/list" } }
+        }
+      ]
+    },
+    "resources_read_request": {
+      "allOf": [
+        { "$ref": "#/definitions/base_request" },
+        {
+          "type": "object",
+          "properties": {
+            "method": { "const": "resources/read" },
+            "params": {
+              "type": "object",
+              "required": ["uri", "_meta"],
+              "properties": {
+                "uri": { "type": "string", "minLength": 1 },
+                "_meta": { "$ref": "#/definitions/request_meta" }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "jsonrpc_response": {
+      "type": "object",
+      "required": ["jsonrpc", "id"],
+      "properties": {
+        "jsonrpc": { "$ref": "#/definitions/jsonrpc" },
+        "id": { "oneOf": [{ "$ref": "#/definitions/request_id" }, { "type": "null" }] },
+        "result": { "type": "object" },
+        "error": {
+          "type": "object",
+          "required": ["code", "message"],
+          "properties": {
+            "code": { "type": "integer" },
+            "message": { "type": "string" },
+            "data": {}
+          }
+        }
+      },
+      "oneOf": [{ "required": ["result"] }, { "required": ["error"] }]
+    }
+  }
+}

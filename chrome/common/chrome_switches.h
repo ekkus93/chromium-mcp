@@ -27,6 +27,14 @@
 
 namespace switches {
 
+// Opts into the experimental Chromium MCP browser-agent service. The feature
+// flag `features::kBrowserAgentService` must also be enabled.
+inline constexpr char kEnableBrowserAgentService[] =
+    "enable-browser-agent-service";
+inline constexpr char kBrowserAgentMcpPort[] = "browser-agent-mcp-port";
+inline constexpr char kBrowserAgentAuditLog[] = "browser-agent-audit-log";
+inline constexpr char kBrowserAgentTraceDir[] = "browser-agent-trace-dir";
+
 // -----------------------------------------------------------------------------
 // Can't find the switch you are looking for? Try looking in
 // media/base/media_switches.cc or ui/gl/gl_switches.cc or one of the

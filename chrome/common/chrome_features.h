@@ -22,6 +22,10 @@
 
 namespace features {
 
+// Enables the experimental browser-agent control plane. The service also
+// requires the explicit --enable-browser-agent-service runtime switch.
+COMPONENT_EXPORT(CHROME_FEATURES) BASE_DECLARE_FEATURE(kBrowserAgentService);
+
 // All features in alphabetical order. The features should be documented
 // alongside the definition of their values in the .cc file.
 

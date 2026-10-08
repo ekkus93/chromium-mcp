@@ -19,6 +19,8 @@ namespace features {
 
 // All features in alphabetical order.
 
+BASE_FEATURE(kBrowserAgentService, base::FEATURE_DISABLED_BY_DEFAULT);
+
 #if BUILDFLAG(IS_WIN)
 // When enabled, notifications from PWA's will use the PWA icon and name,
 // as long as the PWA is on the start menu.  b/40285965.

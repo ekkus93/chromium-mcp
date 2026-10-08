@@ -4857,6 +4857,7 @@ test("unit_tests") {
     "//chrome/browser/actor:test_support",
     "//chrome/browser/actor:unit_tests",
     "//chrome/browser/actor/ui:unit_tests",
+    "//chrome/browser/agent:unit_tests",
     "//chrome/browser/ai",
     "//chrome/browser/ai:test_support",
     "//chrome/browser/apps:unit_tests",

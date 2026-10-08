@@ -5,16 +5,21 @@
 #include "content/browser/web_contents/file_chooser_impl.h"
 
 #include <algorithm>
+#include <map>
+#include <vector>
 
 #include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/weak_ptr.h"
+#include "base/no_destructor.h"
 #include "base/task/thread_pool.h"
 #include "content/browser/back_forward_cache/back_forward_cache_disable.h"
 #include "content/browser/renderer_host/render_frame_host_delegate.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/browser/security/cpsp/child_process_security_policy_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
+#include "content/public/browser/browser_automation.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/storage_partition.h"
@@ -22,10 +27,25 @@
 #include "content/public/common/child_process_id.h"
 #include "content/public/common/content_client.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
+#include "third_party/blink/public/common/tokens/tokens.h"
 
 namespace content {
 
 namespace {
+
+struct PendingFileSelection {
+  base::WeakPtr<RenderFrameHostImpl> frame;
+  blink::DocumentToken document_token;
+  std::vector<base::FilePath> paths;
+};
+
+using PendingAutomationFiles =
+    std::map<GlobalRenderFrameHostId, PendingFileSelection>;
+
+PendingAutomationFiles& GetPendingAutomationFiles() {
+  static base::NoDestructor<PendingAutomationFiles> files;
+  return *files;
+}
 
 // Removes any file that is a symlink or is inside a directory symlink.
 // For |kUploadFolder| mode only. |base_dir| is the folder being uploaded.
@@ -61,6 +81,18 @@ std::vector<blink::mojom::FileChooserFileInfoPtr> RemoveSymlinks(
 }
 
 }  // namespace
+
+void SetFilesForNextFileChooserForAutomation(
+    RenderFrameHost* render_frame_host,
+    std::vector<base::FilePath> paths) {
+  std::erase_if(GetPendingAutomationFiles(),
+                [](const auto& entry) { return !entry.second.frame; });
+  auto* frame = RenderFrameHostImpl::From(render_frame_host);
+  GetPendingAutomationFiles().insert_or_assign(
+      frame->GetGlobalId(),
+      PendingFileSelection{frame->GetWeakPtr(), frame->GetDocumentToken(),
+                           std::move(paths)});
+}
 
 FileChooserImpl::FileSelectListenerImpl::FileSelectListenerImpl(
     FileChooserImpl* owner)
@@ -216,6 +248,31 @@ void FileChooserImpl::OpenFileChooser(blink::mojom::FileChooserParamsPtr params,
       render_frame_host(),
       BackForwardCacheDisable::DisabledReason(
           BackForwardCacheDisable::DisabledReasonId::kFileChooser));
+
+  auto pending_files = GetPendingAutomationFiles().find(render_frame_host_id_);
+  if (pending_files != GetPendingAutomationFiles().end() &&
+      (pending_files->second.frame.get() != render_frame_host() ||
+       pending_files->second.document_token !=
+           render_frame_host()->GetDocumentToken())) {
+    GetPendingAutomationFiles().erase(pending_files);
+    pending_files = GetPendingAutomationFiles().end();
+  }
+  if (pending_files != GetPendingAutomationFiles().end() &&
+      (params->mode == blink::mojom::FileChooserParams::Mode::kOpen ||
+       params->mode == blink::mojom::FileChooserParams::Mode::kOpenMultiple)) {
+    std::vector<blink::mojom::FileChooserFileInfoPtr> selected;
+    for (const base::FilePath& path : pending_files->second.paths) {
+      selected.push_back(blink::mojom::FileChooserFileInfo::NewNativeFile(
+          blink::mojom::NativeFileInfo::New(path, std::u16string(),
+                                            std::vector<std::u16string>())));
+      if (params->mode == blink::mojom::FileChooserParams::Mode::kOpen) {
+        break;
+      }
+    }
+    GetPendingAutomationFiles().erase(pending_files);
+    listener->FileSelected(std::move(selected), base::FilePath(), params->mode);
+    return;
+  }
 
   WebContentsImpl::FromRenderFrameHostImpl(render_frame_host())
       ->RunFileChooser(GetWeakPtr(), render_frame_host(), std::move(listener),

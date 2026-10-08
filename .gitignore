@@ -355,3 +355,6 @@ third_party/rust/target/
 
 run_codex*.sh*
 *~
+
+# Browser-agent protocol test dependencies
+/agent_protocol/node_modules/

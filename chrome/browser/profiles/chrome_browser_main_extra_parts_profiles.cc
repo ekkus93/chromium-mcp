@@ -16,6 +16,7 @@
 #include "chrome/browser/account_settings/account_setting_service_factory.h"
 #include "chrome/browser/actor/actor_keyed_service_factory.h"
 #include "chrome/browser/affiliations/affiliation_service_factory.h"
+#include "chrome/browser/agent/browser_agent_service_factory.h"
 #include "chrome/browser/ai/ai_data_keyed_service_factory.h"
 #include "chrome/browser/autocomplete/aim_eligibility_service_factory.h"
 #include "chrome/browser/autocomplete/autocomplete_classifier_factory.h"
@@ -747,6 +748,7 @@ void ChromeBrowserMainExtraPartsProfiles::
   search_integrity::SearchIntegrityFactory::GetInstance();
 #endif
   actor::ActorKeyedServiceFactory::GetInstance();
+  browser_agent::BrowserAgentServiceFactory::GetInstance();
 #if BUILDFLAG(IS_ANDROID)
   AndroidSessionDurationsServiceFactory::GetInstance();
 #endif

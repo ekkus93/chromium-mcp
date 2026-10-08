@@ -171,6 +171,8 @@ void TabModalDialogManager::RunJavaScriptDialog(
   std::u16string title = GetAppModalDialogManager()->GetTitle(
       alerting_web_contents, render_frame_host->GetLastCommittedOrigin());
   dialog_title_ = title;
+  dialog_message_ = truncated_message_text;
+  dialog_default_prompt_ = truncated_default_prompt_text;
   dialog_callback_ = std::move(callback);
   dialog_type_ = dialog_type;
   if (make_pending) {
@@ -363,10 +365,21 @@ void TabModalDialogManager::CloseDialog(DismissalCause cause,
 
   dialog_.reset();
   dialog_title_.clear();
+  dialog_message_.clear();
+  dialog_default_prompt_.clear();
   pending_dialog_.Reset();
   dialog_callback_.Reset();
 
   delegate_->DidCloseDialog();
+}
+
+std::optional<TabModalDialogManager::ActiveDialogInfo>
+TabModalDialogManager::GetActiveDialogInfo() const {
+  if (!dialog_ && !pending_dialog_) {
+    return std::nullopt;
+  }
+  return ActiveDialogInfo{dialog_type_, dialog_title_, dialog_message_,
+                          dialog_default_prompt_};
 }
 
 WEB_CONTENTS_USER_DATA_KEY_IMPL(TabModalDialogManager);

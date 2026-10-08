@@ -525,6 +525,8 @@ class CONTENT_EXPORT RenderFrameHostImpl
                                JavaScriptResultCallback callback) override;
   void ExecuteJavaScript(const std::u16string& javascript,
                          JavaScriptResultCallback callback) override;
+  void ExecuteJavaScriptForAutomation(const std::u16string& javascript,
+                                      JavaScriptResultCallback callback);
   void ExecuteJavaScriptInIsolatedWorld(const std::u16string& javascript,
                                         JavaScriptResultCallback callback,
                                         int32_t world_id) override;

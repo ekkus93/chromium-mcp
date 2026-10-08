@@ -1,0 +1,62 @@
+# Copyright 2026 The Chromium Authors
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+source_set("agent") {
+  sources = [
+    "browser_agent_mcp_server.cc",
+    "browser_agent_mcp_server.h",
+    "browser_agent_network_throttle.cc",
+    "browser_agent_network_throttle.h",
+    "browser_agent_protocol.cc",
+    "browser_agent_protocol.h",
+    "browser_agent_service.cc",
+    "browser_agent_service.h",
+    "browser_agent_service_factory.cc",
+    "browser_agent_service_factory.h",
+  ]
+
+  deps = [
+    "//base",
+    "//chrome/browser/content_settings",
+    "//chrome/browser/content_settings:content_settings_factory",
+    "//chrome/browser/profiles:profile",
+    "//chrome/browser/ui/browser_window:create_browser_window",
+    "//chrome/common",
+    "//components/content_settings/core/browser",
+    "//components/content_settings/core/common",
+    "//components/download/public/common:public",
+    "//components/input",
+    "//components/javascript_dialogs",
+    "//components/keyed_service/content",
+    "//components/language/core/browser",
+    "//components/version_info",
+    "//content/public/browser",
+    "//crypto",
+    "//mojo/public/cpp/base",
+    "//mojo/public/cpp/bindings",
+    "//mojo/public/cpp/system",
+    "//net",
+    "//services/network/public/cpp",
+    "//services/network/public/mojom",
+    "//third_party/blink/public/common",
+    "//ui/accessibility:ax_base",
+    "//ui/gfx",
+  ]
+}
+
+source_set("unit_tests") {
+  testonly = true
+  sources = [
+    "browser_agent_protocol_unittest.cc",
+    "browser_agent_service_unittest.cc",
+  ]
+  deps = [
+    ":agent",
+    "//base/test:test_support",
+    "//chrome/test/base:testing_profile",
+    "//chrome/test/base:testing_profile_impl",
+    "//content/test:test_support",
+    "//testing/gtest",
+  ]
+}

@@ -22,12 +22,14 @@ If you found a bug, please file it at https://crbug.com/new.
 
 ## Chromium MCP Agent Browser
 
-This fork is being extended into a Chromium-native agent browser. The project
-adds a browser-process control plane that can be exposed through an MCP sidecar
-while keeping policy decisions inside Chromium. The sidecar adapts external MCP
-calls; Chromium remains authoritative for tab state, frame state, input dispatch,
-permissions, sensitive-data redaction, downloads/uploads, audit logging, and
-trace capture.
+This fork adds an MCP server inside Chromium. MCP requests are handled by a
+browser-process service that calls Chromium's native browser APIs directly. It
+does not use CDP, Playwright, or a separate MCP sidecar to control the browser.
+
+The MCP surface is intended to expose the browser's full native capabilities,
+without an agent-specific policy allowlist or approval layer. Chromium's normal
+platform boundaries still apply, including operating-system permissions,
+profile ownership, and the browser sandbox.
 
 Project entry points:
 
@@ -38,20 +40,6 @@ Project entry points:
 - [Tool Contract](docs/TOOL_CONTRACT.md)
 - [Test Plan](docs/TEST_PLAN.md)
 
-Initial architecture summary:
-
-- Chromium fork: owns browser state, policy enforcement, redaction, audit, and
-  native browser operations.
-- Browser-agent service: planned browser-process service behind an explicit
-  feature/runtime flag.
-- MCP sidecar: planned local adapter that exposes Playwright-inspired MCP tools
-  while forwarding requests to the browser-agent service.
-- Agent clients: untrusted callers that receive only schema-validated,
-  policy-filtered capabilities.
-- User: final authority for sensitive operations such as file crossing,
-  privileged permissions, account changes, payments, and other high-risk form
-  submissions.
-
-Development is currently in Phase 0. See `docs/PROJECT_ORIENTATION.md` for the
-current repository layout, local build/test entry points, branch policy, and CI
-capacity notes.
+The in-process MCP service is disabled by default and requires an explicit
+feature/runtime opt-in. See [Project Orientation](docs/PROJECT_ORIENTATION.md)
+for build and development commands.

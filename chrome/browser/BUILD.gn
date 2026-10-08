@@ -2067,6 +2067,7 @@ source_set("browser") {
     "//chrome/browser/accessibility:impl",
     "//chrome/browser/account_settings",
     "//chrome/browser/affiliations",
+    "//chrome/browser/agent",
     "//chrome/browser/ai",
     "//chrome/browser/ai:impl",
     "//chrome/browser/autocomplete",

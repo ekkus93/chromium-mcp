@@ -204,6 +204,7 @@
 #include "content/common/navigation_client.mojom.h"
 #include "content/common/navigation_params_utils.h"
 #include "content/public/browser/active_url_message_filter.h"
+#include "content/public/browser/browser_automation.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/clipboard_types.h"
 #include "content/public/browser/content_browser_client.h"
@@ -3865,6 +3866,26 @@ void RenderFrameHostImpl::ExecuteJavaScript(const std::u16string& javascript,
   const bool wants_result = !callback.is_null();
   GetAssociatedLocalFrame()->JavaScriptExecuteRequest(javascript, wants_result,
                                                       std::move(callback));
+}
+
+void RenderFrameHostImpl::ExecuteJavaScriptForAutomation(
+    const std::u16string& javascript,
+    JavaScriptResultCallback callback) {
+  CHECK_CURRENTLY_ON(BrowserThread::UI);
+  AssertFrameWasCommitted();
+
+  const bool wants_result = !callback.is_null();
+  GetAssociatedLocalFrame()->JavaScriptExecuteRequest(javascript, wants_result,
+                                                      std::move(callback));
+}
+
+void ExecuteJavaScriptForAutomation(
+    RenderFrameHost* render_frame_host,
+    const std::u16string& javascript,
+    base::OnceCallback<void(base::Value)> callback) {
+  CHECK(render_frame_host);
+  static_cast<RenderFrameHostImpl*>(render_frame_host)
+      ->ExecuteJavaScriptForAutomation(javascript, std::move(callback));
 }
 
 void RenderFrameHostImpl::ExecuteJavaScriptInIsolatedWorld(
@@ -15996,9 +16017,9 @@ bool RenderFrameHostImpl::ValidateURLAndOrigin(
       // The origin and URL are safe to commit.
       break;
     case CanCommitStatus::CANNOT_COMMIT_URL:
-      DLOG(ERROR) << "CANNOT_COMMIT_URL url '" << url << "'"
-                  << " origin '" << origin << "'"
-                  << " lock '" << process->GetProcessLock().ToString() << "'";
+      DLOG(ERROR) << "CANNOT_COMMIT_URL url '" << url << "'" << " origin '"
+                  << origin << "'" << " lock '"
+                  << process->GetProcessLock().ToString() << "'";
       VLOG(1) << "Blocked URL " << url.spec();
       LogCannotCommitUrlCrashKeys(url, origin, is_same_document_navigation,
                                   navigation_request);
@@ -16008,9 +16029,9 @@ bool RenderFrameHostImpl::ValidateURLAndOrigin(
                                       bad_message::RFH_CAN_COMMIT_URL_BLOCKED);
       return false;
     case CanCommitStatus::CANNOT_COMMIT_ORIGIN:
-      DLOG(ERROR) << "CANNOT_COMMIT_ORIGIN url '" << url << "'"
-                  << " origin '" << origin << "'"
-                  << " lock '" << process->GetProcessLock().ToString() << "'";
+      DLOG(ERROR) << "CANNOT_COMMIT_ORIGIN url '" << url << "'" << " origin '"
+                  << origin << "'" << " lock '"
+                  << process->GetProcessLock().ToString() << "'";
       DEBUG_ALIAS_FOR_ORIGIN(origin_debug_alias, origin);
       LogCannotCommitOriginCrashKeys(url, origin, process->GetProcessLock(),
                                      is_same_document_navigation,

@@ -1,0 +1,13 @@
+{
+  "name": "chromium-mcp-agent-protocol",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "test:chromium": "python3 tests/chromium_mcp_integration.py"
+  },
+  "devDependencies": {
+    "ajv": "^8.17.1"
+  }
+}
