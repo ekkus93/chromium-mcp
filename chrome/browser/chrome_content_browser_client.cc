@@ -2952,6 +2952,11 @@ void ChromeContentBrowserClient::AppendExtraCommandLineSwitches(
   const base::CommandLine& browser_command_line =
       *base::CommandLine::ForCurrentProcess();
 
+  if (process_type == switches::kRendererProcess &&
+      browser_command_line.HasSwitch(switches::kEnableBrowserAgentService)) {
+    command_line->AppendSwitch(switches::kEnableBrowserAgentService);
+  }
+
   static const char* const kCommonSwitchNames[] = {
       embedder_support::kUserAgent,
       switches::kUserDataDir,  // Make logs go to the right file.

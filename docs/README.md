@@ -12,6 +12,14 @@ below.**
 
 [TOC]
 
+### Chromium MCP Agent Browser
+*   [Agent Browser Specification](CHROMIUM_MCP_AGENT_BROWSER_SPEC.md)
+*   [Agent Browser TODO](CHROMIUM_MCP_AGENT_BROWSER_TODO.md)
+*   [Remediation Specification](CHROMIUM_MCP_AGENT_BROWSER_REMEDIATION_SPEC.md)
+*   [Remediation TODO](CHROMIUM_MCP_AGENT_BROWSER_REMEDIATION_TODO.md)
+*   [Tool Contract](TOOL_CONTRACT.md)
+*   [Test Plan](TEST_PLAN.md)
+
 ## Creating Documentation
 
 ### Guidelines

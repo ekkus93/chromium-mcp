@@ -7,6 +7,7 @@
     { "$ref": "#/definitions/discover_request" },
     { "$ref": "#/definitions/tools_list_request" },
     { "$ref": "#/definitions/tools_call_request" },
+    { "$ref": "#/definitions/subscriptions_listen_request" },
     { "$ref": "#/definitions/resources_list_request" },
     { "$ref": "#/definitions/resources_read_request" },
     { "$ref": "#/definitions/jsonrpc_response" }
@@ -16,10 +17,17 @@
     "jsonrpc": { "type": "string", "const": "2.0" },
     "request_meta": {
       "type": "object",
-      "required": ["io.modelcontextprotocol/protocolVersion"],
+      "required": ["io.modelcontextprotocol/protocolVersion", "io.modelcontextprotocol/clientCapabilities"],
       "properties": {
         "io.modelcontextprotocol/protocolVersion": { "const": "2026-07-28" },
-        "io.modelcontextprotocol/clientInfo": { "type": "object" },
+        "io.modelcontextprotocol/clientInfo": {
+          "type": "object",
+          "required": ["name", "version"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "version": { "type": "string", "minLength": 1 }
+          }
+        },
         "io.modelcontextprotocol/clientCapabilities": { "type": "object" }
       },
       "additionalProperties": true
@@ -86,6 +94,37 @@
                 "_meta": { "$ref": "#/definitions/request_meta" }
               },
               "additionalProperties": true
+            }
+          }
+        }
+      ]
+    },
+    "subscriptions_listen_request": {
+      "allOf": [
+        { "$ref": "#/definitions/base_request" },
+        {
+          "type": "object",
+          "properties": {
+            "method": { "const": "subscriptions/listen" },
+            "params": {
+              "type": "object",
+              "required": ["notifications", "_meta"],
+              "properties": {
+                "notifications": {
+                  "type": "object",
+                  "properties": {
+                    "toolsListChanged": { "type": "boolean" },
+                    "promptsListChanged": { "type": "boolean" },
+                    "resourcesListChanged": { "type": "boolean" },
+                    "resourceSubscriptions": {
+                      "type": "array",
+                      "items": { "type": "string", "minLength": 1 }
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "_meta": { "$ref": "#/definitions/request_meta" }
+              }
             }
           }
         }

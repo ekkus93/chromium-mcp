@@ -16,10 +16,14 @@
 
 namespace network {
 struct ResourceRequest;
+struct HttpRequestHeadersUpdateParams;
 namespace mojom {
 class URLResponseHead;
 }
 }  // namespace network
+namespace net {
+struct RedirectInfo;
+}
 
 namespace browser_agent {
 
@@ -38,6 +42,11 @@ class BrowserAgentNetworkThrottle final : public blink::URLLoaderThrottle {
 
   void WillStartRequest(network::ResourceRequest* request,
                         bool* defer) override;
+  void WillRedirectRequest(
+      net::RedirectInfo* redirect_info,
+      const network::mojom::URLResponseHead& response_head,
+      bool* defer,
+      network::HttpRequestHeadersUpdateParams* headers_update_params) override;
   void WillProcessResponse(const GURL& response_url,
                            network::mojom::URLResponseHead* response_head,
                            bool* defer) override;
@@ -50,6 +59,7 @@ class BrowserAgentNetworkThrottle final : public blink::URLLoaderThrottle {
   std::string request_url_;
   std::string request_id_;
   bool capture_response_ = false;
+  bool has_redirected_ = false;
   std::unique_ptr<BrowserAgentNetworkResponseForwarder> response_forwarder_;
   base::WeakPtrFactory<BrowserAgentNetworkThrottle> weak_factory_{this};
 };

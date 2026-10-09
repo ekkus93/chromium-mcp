@@ -146,7 +146,7 @@ class BrowserAgentMcpServerState
   void SetServer(net::HttpServer* server) {
     server_ = server;
     if (!server_) {
-      event_streams_.clear();
+      subscriptions_.clear();
     }
   }
 
@@ -157,23 +157,41 @@ class BrowserAgentMcpServerState
     }
   }
 
-  void OpenEventStream(int connection_id) {
+  void OpenSubscription(int connection_id,
+                        std::string subscription_id,
+                        bool browser_events) {
     if (!server_) {
       return;
     }
-    event_streams_.insert(connection_id);
-    SendEvent(
-        connection_id,
-        R"({"jsonrpc":"2.0","method":"notifications/message","params":{"level":"info","logger":"chromium","data":{"event_type":"event_stream_opened"}}})");
+    subscriptions_[connection_id] =
+        Subscription{std::move(subscription_id), browser_events};
+    const Subscription& subscription = subscriptions_[connection_id];
+    base::DictValue params;
+    base::DictValue notifications;
+    base::ListValue resources;
+    if (browser_events) {
+      resources.Append("chromium-mcp://browser/events");
+    }
+    notifications.Set("resourceSubscriptions", std::move(resources));
+    params.Set("notifications", std::move(notifications));
+    SendSubscriptionMessage(connection_id,
+                            "notifications/subscriptions/acknowledged",
+                            std::move(params), subscription.id);
   }
 
-  bool CloseEventStream(int connection_id) {
-    return event_streams_.erase(connection_id) != 0;
+  bool CloseSubscription(int connection_id) {
+    return subscriptions_.erase(connection_id) != 0;
   }
 
-  void SendNotification(const std::string& notification) {
-    for (int connection_id : event_streams_) {
-      SendEvent(connection_id, notification);
+  void SendResourceUpdated(std::string_view uri) {
+    for (const auto& [connection_id, subscription] : subscriptions_) {
+      if (!subscription.browser_events) {
+        continue;
+      }
+      base::DictValue params;
+      params.Set("uri", uri);
+      SendSubscriptionMessage(connection_id, "notifications/resources/updated",
+                              std::move(params), subscription.id);
     }
   }
 
@@ -186,11 +204,30 @@ class BrowserAgentMcpServerState
     server_->SendRaw(connection_id, chunk, GetTrafficAnnotation());
   }
 
+  void SendSubscriptionMessage(int connection_id,
+                               std::string_view method,
+                               base::DictValue params,
+                               std::string_view subscription_id) {
+    base::DictValue message;
+    message.Set("jsonrpc", "2.0");
+    message.Set("method", method);
+    message.Set("params", std::move(params));
+    base::DictValue meta;
+    meta.Set("io.modelcontextprotocol/subscriptionId", subscription_id);
+    message.Set("_meta", std::move(meta));
+    SendEvent(connection_id,
+              base::WriteJson(base::Value(std::move(message))).value_or("{}"));
+  }
+
   friend class base::RefCountedThreadSafe<BrowserAgentMcpServerState>;
   ~BrowserAgentMcpServerState() = default;
 
   raw_ptr<net::HttpServer> server_ = nullptr;
-  std::set<int> event_streams_;
+  struct Subscription {
+    std::string id;
+    bool browser_events;
+  };
+  std::map<int, Subscription> subscriptions_;
 };
 
 namespace {
@@ -216,6 +253,51 @@ std::string MakeJsonRpcError(base::Value request_id,
   response.Set("error", std::move(error));
   return base::WriteJson(base::Value(std::move(response))).value_or("{}");
 }
+
+std::string MakeProtocolError(base::Value request_id,
+                              int code,
+                              std::string message,
+                              base::DictValue data = {}) {
+  base::DictValue response;
+  response.Set("jsonrpc", "2.0");
+  response.Set("id", std::move(request_id));
+  base::DictValue error;
+  error.Set("code", code);
+  error.Set("message", std::move(message));
+  if (!data.empty()) {
+    error.Set("data", std::move(data));
+  }
+  response.Set("error", std::move(error));
+  return base::WriteJson(base::Value(std::move(response))).value_or("{}");
+}
+
+std::optional<std::string> DecodeMcpName(std::string value) {
+  constexpr std::string_view kPrefix = "=?base64?";
+  constexpr std::string_view kSuffix = "?=";
+  if (!value.starts_with(kPrefix) || !value.ends_with(kSuffix)) {
+    if ((!value.empty() &&
+         (value.front() == ' ' || value.front() == '\t' ||
+          value.back() == ' ' || value.back() == '\t')) ||
+        !base::IsStringASCII(value) ||
+        std::ranges::any_of(value, [](unsigned char character) {
+          return (character < 0x20 && character != '\t') || character > 0x7e;
+        })) {
+      return std::nullopt;
+    }
+    return value;
+  }
+  std::string decoded;
+  const std::string_view encoded =
+      std::string_view(value).substr(kPrefix.size(),
+                                     value.size() - kPrefix.size() -
+                                         kSuffix.size());
+  if (!base::Base64Decode(encoded, &decoded)) {
+    return std::nullopt;
+  }
+  return decoded;
+}
+
+constexpr char kBrowserEventsUri[] = "chromium-mcp://browser/events";
 
 }  // namespace
 
@@ -372,32 +454,9 @@ void BrowserAgentMcpServer::OnHttpRequest(
              R"({"error":"MCP authentication required"})");
     return;
   }
-  if (info.method == "GET") {
-    const std::string accept =
-        base::ToLowerASCII(info.GetHeaderValue("accept"));
-    if (accept.find("text/event-stream") == std::string::npos) {
-      SendJson(
-          connection_id, net::HTTP_NOT_ACCEPTABLE,
-          R"({"error":"event stream requires Accept: text/event-stream"})");
-      return;
-    }
-    net::HttpServerResponseInfo response(net::HTTP_OK);
-    response.AddHeader("Content-Type", "text/event-stream");
-    response.AddHeader("Cache-Control", "no-cache");
-    response.AddHeader("Connection", "keep-alive");
-    response.AddHeader("Transfer-Encoding", "chunked");
-    http_server_->SendResponse(connection_id, response, GetTrafficAnnotation());
-    server_state_->OpenEventStream(connection_id);
-    ui_task_runner_->PostTask(
-        FROM_HERE,
-        base::BindOnce(&BrowserAgentMcpServer::StartEventStreamOnUiThread,
-                       weak_this_, connection_id));
-    return;
-  }
   if (info.method != "POST") {
-    SendJson(
-        connection_id, net::HTTP_METHOD_NOT_ALLOWED,
-        R"({"error":"MCP requests must use POST or an event-stream GET"})");
+    SendJson(connection_id, net::HTTP_METHOD_NOT_ALLOWED,
+             R"({"error":"MCP requests must use POST"})");
     return;
   }
 
@@ -407,8 +466,16 @@ void BrowserAgentMcpServer::OnHttpRequest(
     return;
   }
 
-  const std::string protocol_version =
-      info.GetHeaderValue(kProtocolVersionHeader);
+  const std::string content_type =
+      base::ToLowerASCII(info.GetHeaderValue("content-type"));
+  if (!content_type.starts_with("application/json") ||
+      (content_type.size() > 16 && content_type[16] != ';' &&
+       content_type[16] != ' ')) {
+    SendJson(connection_id, net::HTTP_BAD_REQUEST,
+             MakeJsonRpcError(base::Value(), -32600,
+                              "Content-Type must be application/json."));
+    return;
+  }
   std::optional<base::Value> value = base::JSONReader::Read(info.data, 0);
   if (!value) {
     SendJson(connection_id, net::HTTP_BAD_REQUEST,
@@ -421,36 +488,83 @@ void BrowserAgentMcpServer::OnHttpRequest(
     return;
   }
   const base::DictValue& request = value->GetDict();
+  const base::Value* request_id = request.Find("id");
+  const bool valid_id = request_id &&
+                        (request_id->is_string() || request_id->is_int() ||
+                         request_id->is_double());
+  base::Value error_id = valid_id ? request_id->Clone() : base::Value();
+  const std::string* jsonrpc = request.FindString("jsonrpc");
   const std::string* method = request.FindString("method");
-  if (!method ||
-      info.GetHeaderValue(kProtocolVersionHeader) !=
-          protocol::kMcpProtocolVersion ||
-      info.GetHeaderValue(kMethodHeader) != *method) {
+  const base::DictValue* params = request.FindDict("params");
+  const base::DictValue* metadata = params ? params->FindDict("_meta") : nullptr;
+  const std::string* body_version =
+      metadata ? metadata->FindString("io.modelcontextprotocol/protocolVersion")
+               : nullptr;
+  const base::DictValue* client_capabilities =
+      metadata ? metadata->FindDict("io.modelcontextprotocol/clientCapabilities")
+               : nullptr;
+  const base::DictValue* client_info =
+      metadata ? metadata->FindDict("io.modelcontextprotocol/clientInfo")
+               : nullptr;
+  if (!jsonrpc || *jsonrpc != "2.0" || !valid_id || !method || !params) {
     SendJson(connection_id, net::HTTP_BAD_REQUEST,
-             R"({"error":"MCP protocol headers do not match the request"})");
+             MakeJsonRpcError(error_id.Clone(), -32600,
+                              "Invalid JSON-RPC request."));
     return;
   }
-  const base::DictValue* params = request.FindDict("params");
-  const base::DictValue* metadata =
-      params ? params->FindDict("_meta") : nullptr;
-  if (metadata) {
-    const std::string* request_protocol_version =
-        metadata->FindString("io.modelcontextprotocol/protocolVersion");
-    if (request_protocol_version &&
-        *request_protocol_version != protocol_version) {
-      SendJson(
-          connection_id, net::HTTP_BAD_REQUEST,
-          R"({"error":"MCP protocol version header does not match metadata"})");
-      return;
-    }
+  if (!metadata || !body_version || !client_capabilities ||
+      (metadata->Find("io.modelcontextprotocol/clientCapabilities") &&
+       !metadata->Find("io.modelcontextprotocol/clientCapabilities")->is_dict()) ||
+      (metadata->Find("io.modelcontextprotocol/clientInfo") &&
+       (!client_info || !client_info->FindString("name") ||
+        !client_info->FindString("version")))) {
+    SendJson(connection_id, net::HTTP_BAD_REQUEST,
+             MakeJsonRpcError(error_id.Clone(), -32602,
+                              "Missing or malformed request metadata."));
+    return;
+  }
+  const std::string header_version = info.GetHeaderValue(kProtocolVersionHeader);
+  if (header_version.empty() || info.GetHeaderValue(kMethodHeader).empty()) {
+    SendJson(connection_id, net::HTTP_BAD_REQUEST,
+             MakeProtocolError(error_id.Clone(), -32020,
+                               "Required MCP request headers are missing."));
+    return;
+  }
+  if (*body_version != header_version ||
+      info.GetHeaderValue(kMethodHeader) != *method) {
+    SendJson(connection_id, net::HTTP_BAD_REQUEST,
+             MakeProtocolError(error_id.Clone(), -32020,
+                               "MCP request headers do not match the body."));
+    return;
+  }
+  if (*body_version != protocol::kMcpProtocolVersion) {
+    base::DictValue error_data;
+    base::ListValue supported_versions;
+    supported_versions.Append(protocol::kMcpProtocolVersion);
+    error_data.Set("supportedVersions", std::move(supported_versions));
+    SendJson(connection_id, net::HTTP_BAD_REQUEST,
+             MakeProtocolError(error_id.Clone(), -32022,
+                               "Unsupported protocol version.",
+                               std::move(error_data)));
+    return;
+  }
+  if (*method != "server/discover" && *method != "tools/list" &&
+      *method != "tools/call" && *method != "resources/list" &&
+      *method != "resources/read" && *method != "subscriptions/listen") {
+    SendJson(connection_id, net::HTTP_NOT_FOUND,
+             MakeJsonRpcError(error_id.Clone(), -32601, "Method not found."));
+    return;
   }
   if (*method == "tools/call") {
     const base::DictValue* call_params = request.FindDict("params");
     const std::string* tool_name =
         call_params ? call_params->FindString("name") : nullptr;
-    if (!tool_name || info.GetHeaderValue(kNameHeader) != *tool_name) {
+    const std::optional<std::string> header_name =
+        DecodeMcpName(info.GetHeaderValue(kNameHeader));
+    if (!tool_name || !header_name || *header_name != *tool_name) {
       SendJson(connection_id, net::HTTP_BAD_REQUEST,
-               R"({"error":"Mcp-Name does not match the tool call"})");
+               MakeProtocolError(error_id.Clone(), -32020,
+                                 "Mcp-Name does not match the tool call."));
       return;
     }
   }
@@ -458,11 +572,55 @@ void BrowserAgentMcpServer::OnHttpRequest(
     const base::DictValue* read_params = request.FindDict("params");
     const std::string* resource_uri =
         read_params ? read_params->FindString("uri") : nullptr;
-    if (!resource_uri || info.GetHeaderValue(kNameHeader) != *resource_uri) {
+    const std::optional<std::string> header_name =
+        DecodeMcpName(info.GetHeaderValue(kNameHeader));
+    if (!resource_uri || !header_name || *header_name != *resource_uri) {
       SendJson(connection_id, net::HTTP_BAD_REQUEST,
-               R"({"error":"Mcp-Name does not match the resource URI"})");
+               MakeProtocolError(error_id.Clone(), -32020,
+                                 "Mcp-Name does not match the resource URI."));
       return;
     }
+  }
+  if (*method == "subscriptions/listen") {
+    const base::DictValue* notification_filter =
+        params->FindDict("notifications");
+    const base::ListValue* resources =
+        notification_filter
+            ? notification_filter->FindList("resourceSubscriptions")
+            : nullptr;
+    const std::string accept =
+        base::ToLowerASCII(info.GetHeaderValue("accept"));
+    if (accept.find("text/event-stream") == std::string::npos) {
+      SendJson(connection_id, net::HTTP_NOT_ACCEPTABLE,
+               MakeJsonRpcError(error_id.Clone(), -32602,
+                                "subscriptions/listen requires an SSE Accept header."));
+      return;
+    }
+    net::HttpServerResponseInfo response(net::HTTP_OK);
+    response.AddHeader("Content-Type", "text/event-stream");
+    response.AddHeader("Cache-Control", "no-cache");
+    response.AddHeader("X-Accel-Buffering", "no");
+    response.AddHeader("Connection", "keep-alive");
+    response.AddHeader("Transfer-Encoding", "chunked");
+    http_server_->SendResponse(connection_id, response, GetTrafficAnnotation());
+    bool observes_browser_events = false;
+    if (resources) {
+      observes_browser_events = std::ranges::any_of(
+          *resources, [](const base::Value& uri) {
+            return uri.is_string() && uri.GetString() == kBrowserEventsUri;
+          });
+    }
+    server_state_->OpenSubscription(
+        connection_id,
+        error_id.is_string()
+            ? error_id.GetString()
+            : base::WriteJson(error_id.Clone()).value_or("null"),
+        observes_browser_events);
+    ui_task_runner_->PostTask(
+        FROM_HERE,
+        base::BindOnce(&BrowserAgentMcpServer::StartEventStreamOnUiThread,
+                       weak_this_, connection_id));
+    return;
   }
   if (audit_task_runner_) {
     base::DictValue event;
@@ -500,22 +658,19 @@ void BrowserAgentMcpServer::OnHttpRequest(
 }
 
 void BrowserAgentMcpServer::PublishBrowserEvent(base::DictValue event) {
-  base::DictValue params;
-  params.Set("level", "info");
-  params.Set("logger", "chromium.browser");
-  params.Set("data", std::move(event));
-  base::DictValue notification;
-  notification.Set("jsonrpc", "2.0");
-  notification.Set("method", "notifications/message");
-  notification.Set("params", std::move(params));
-  std::string serialized =
-      base::WriteJson(base::Value(std::move(notification))).value_or("{}");
+  base::DictValue entry;
+  entry.Set("cursor", static_cast<double>(next_browser_event_cursor_++));
+  entry.Set("event", std::move(event));
+  browser_events_.Append(std::move(entry));
+  if (browser_events_.size() > 256) {
+    browser_events_.erase(browser_events_.begin());
+  }
   io_task_runner_->PostTask(
       FROM_HERE,
       base::BindOnce(
           [](scoped_refptr<BrowserAgentMcpServerState> server_state,
-             std::string message) { server_state->SendNotification(message); },
-          server_state_, std::move(serialized)));
+             std::string uri) { server_state->SendResourceUpdated(uri); },
+          server_state_, kBrowserEventsUri));
 }
 
 void BrowserAgentMcpServer::PublishNavigationEvent(std::string page_id,
@@ -565,8 +720,7 @@ void BrowserAgentMcpServer::RecordNetworkEventOnUiThread(
         std::make_unique<BrowserAgentConsoleObserver>(contents, std::string());
   }
   event.Set("page_id", page_id);
-  observer->AddNetworkEvent(event.Clone());
-  PublishBrowserEvent(std::move(event));
+  observer->AddNetworkEvent(std::move(event));
 }
 
 std::string BrowserAgentMcpServer::RegisterContext(Profile* profile) {
@@ -615,7 +769,7 @@ void BrowserAgentMcpServer::OnWebSocketMessage(int connection_id,
 }
 
 void BrowserAgentMcpServer::OnClose(int connection_id) {
-  if (server_state_->CloseEventStream(connection_id)) {
+  if (server_state_->CloseSubscription(connection_id)) {
     ui_task_runner_->PostTask(
         FROM_HERE,
         base::BindOnce(&BrowserAgentMcpServer::StopEventStreamOnUiThread,

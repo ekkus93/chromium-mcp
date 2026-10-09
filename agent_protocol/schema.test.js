@@ -8,11 +8,21 @@ const schema = JSON.parse(
 );
 const validate = new Ajv({ allErrors: true }).compile(schema);
 
-const requestMeta = { 'io.modelcontextprotocol/protocolVersion': '2026-07-28' };
+const requestMeta = {
+  'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+  'io.modelcontextprotocol/clientCapabilities': {},
+};
 
 const validMessages = [
   { jsonrpc: '2.0', id: 1, method: 'server/discover', params: { _meta: requestMeta } },
   { jsonrpc: '2.0', id: 'list-1', method: 'tools/list', params: { _meta: requestMeta } },
+  {
+    jsonrpc: '2.0', id: 'listen-1', method: 'subscriptions/listen',
+    params: {
+      notifications: { resourceSubscriptions: ['chromium-mcp://browser/events'] },
+      _meta: requestMeta,
+    },
+  },
   { jsonrpc: '2.0', id: 'resources-1', method: 'resources/list', params: { _meta: requestMeta } },
   { jsonrpc: '2.0', id: 'resource-1', method: 'resources/read', params: { uri: 'chromium-mcp://browser/version', _meta: requestMeta } },
   {
@@ -36,4 +46,10 @@ test('rejects malformed MCP requests', () => {
   assert.equal(validate({ jsonrpc: '1.0', id: 1, method: 'tools/list' }), false);
   assert.equal(validate({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: {} }), false);
   assert.equal(validate({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: '', _meta: requestMeta } }), false);
+  assert.equal(validate({
+    jsonrpc: '2.0', id: 'listen-1', method: 'subscriptions/listen',
+    params: { notifications: { resourceSubscriptions: [] }, _meta: {
+      'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+    } },
+  }), false);
 });

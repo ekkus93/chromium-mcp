@@ -1,6 +1,6 @@
 # Chromium MCP Agent Browser Test Plan
 
-Status: Protocol and browser integration tests pass on the rebuilt local Chrome (2026-10-09)
+Status: Protocol schema passes; browser integration is being updated for the 2026-07-28 transport and rebuilt implementation
 Companion spec: `docs/CHROMIUM_MCP_AGENT_BROWSER_SPEC.md`  
 Canonical TODO: `docs/CHROMIUM_MCP_AGENT_BROWSER_TODO.md`
 
@@ -61,8 +61,8 @@ contexts, stale handles, navigation waits, main-world evaluation in the main
 frame and an iframe, regular/private cookie read/write, native click, hover,
 checkbox and typing input, element focus and option selection, native
 accessibility snapshots, visible content, console messages, MCP screenshots,
-authenticated server event streams for tab and popup creation/closure and
-navigation,
+authenticated POST `subscriptions/listen` streams and cursor reads for tab and
+popup creation/closure and navigation,
 regular/private geolocation content setting isolation, locale, user-agent and
 viewport emulation, page and native context storage operations, file input
 selection, prompts and beforeunload dialogs, registered content settings,
@@ -75,6 +75,12 @@ cancellation, and terminal-state waits:
 cd agent_protocol
 taskset -c 0 env CHROME_BIN=../out/Default/chrome npm run test:chromium
 ```
+
+For an independently maintained client check, install MCP Python SDK 2.3.0 in
+an isolated environment and set `CHROMIUM_MCP_SDK_PYTHONPATH` to that
+environment's package root when running the same command. The integration
+suite then uses the SDK's Streamable HTTP client for discovery, tool listing,
+tool invocation, and resource reads.
 
 To verify a real OS/device permission denial, keep the fixture site's Chromium
 permission allowed and disable a system permission in the OS privacy settings.

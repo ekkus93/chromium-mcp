@@ -1,8 +1,9 @@
 # Chromium MCP Project Orientation
 
-Status: Embedded MCP endpoint and initial native tab tools implemented; broader browser controls in progress
+Status: Embedded MCP endpoint and 2026-10-09 remediation implemented and validated on Linux; documented limitations remain
 Companion spec: `docs/CHROMIUM_MCP_AGENT_BROWSER_SPEC.md`  
 Canonical TODO: `docs/CHROMIUM_MCP_AGENT_BROWSER_TODO.md`
+Current remediation: `docs/CHROMIUM_MCP_AGENT_BROWSER_REMEDIATION_TODO.md`
 
 ## Repository shape
 
@@ -48,7 +49,11 @@ membership), `chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.c
 (profile lifetime hook), `chrome/common/chrome_features.{h,cc}` and
 `chrome/common/chrome_switches.h` (opt-in surface), and
 `content/browser/renderer_host/render_frame_host_impl.{h,cc}` (the narrow
-main-world evaluation hook). Review those diffs first after a rebase. The
+main-world evaluation hook). Network observation also touches
+`chrome/renderer/url_loader_throttle_provider_impl.{h,cc}`,
+`chrome/browser/chrome_content_browser_client.cc`,
+`chrome/browser/chrome_content_browser_client_receiver_bindings.cc`, and
+`chrome/common/agent/`; include those hooks in rebase reviews. Review those diffs first after a rebase. The
 new public declaration in `content/public/browser/browser_automation.h` and
 the isolated `chrome/browser/agent/` sources should usually apply without
 cross-area conflict. Rebuild with the single-core command below and rerun the
@@ -188,8 +193,10 @@ commits can be reviewed without CI; full Chromium tests need a Chromium-capable
 runner with substantial disk and build time. Runner capacity has not been
 verified.
 
-Phase 6 must add CI coverage. Until then, document local validation commands in
-commit messages and in this project's qualification notes.
+CI coverage is not configured for the Chromium/MCP integration suite. Treat
+local validation commands in the canonical TODO and remediation record as the
+current qualification evidence; a future CI setup needs a Chromium-capable
+runner with the required build and display support.
 
 ## Phase 0 status
 

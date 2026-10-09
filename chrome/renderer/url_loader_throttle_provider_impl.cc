@@ -16,6 +16,7 @@
 #include "build/build_config.h"
 #include "chrome/common/agent/browser_agent_network_throttle.h"
 #include "chrome/common/chrome_features.h"
+#include "chrome/common/chrome_switches.h"
 #include "chrome/common/google_url_loader_throttle.h"
 #include "chrome/common/request_header_integrity/buildflags.h"
 #include "chrome/renderer/chrome_content_renderer_client.h"
@@ -205,8 +206,14 @@ URLLoaderThrottleProviderImpl::CreateThrottles(
   DCHECK(!is_frame_resource ||
          type_ == blink::URLLoaderThrottleProviderType::kFrame);
 
-  if (type_ == blink::URLLoaderThrottleProviderType::kFrame &&
-      !is_frame_resource && local_frame_token.has_value()) {
+  const bool browser_agent_network_capture_enabled =
+      base::FeatureList::IsEnabled(features::kBrowserAgentService) &&
+      base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kEnableBrowserAgentService);
+  if (browser_agent_network_capture_enabled &&
+      type_ == blink::URLLoaderThrottleProviderType::kFrame &&
+      !is_frame_resource &&
+      local_frame_token.has_value()) {
     if (pending_browser_agent_network_event_host_) {
       browser_agent_network_event_host_.Bind(
           std::move(pending_browser_agent_network_event_host_));

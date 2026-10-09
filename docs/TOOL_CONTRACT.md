@@ -1,8 +1,9 @@
 # Chromium MCP Agent Browser Tool Contract
 
-Status: Direct in-process MCP implementation in progress
+Status: Remediation in progress; see the linked current checklist
 Companion spec: `docs/CHROMIUM_MCP_AGENT_BROWSER_SPEC.md`
 Canonical TODO: `docs/CHROMIUM_MCP_AGENT_BROWSER_TODO.md`
+Current remediation: `docs/CHROMIUM_MCP_AGENT_BROWSER_REMEDIATION_TODO.md`
 
 ## Contract purpose
 
@@ -22,11 +23,14 @@ The browser process receives MCP JSON-RPC requests, validates protocol syntax an
 
 Implement the MCP server discovery and tool methods, including `server/discover`, `tools/list`, and `tools/call`. Current tools are `browser.version`, `browser.list_contexts`, `browser.create_context`, `browser.close_context`, `context.storage_state` (native cookie read), `context.set_cookies` (native cookie write), `page.list`, `page.new`, `page.get_info`, `page.frames`, `page.screenshot` (native surface capture returned as MCP image content), `page.accessibility_snapshot` (native accessibility node tree), `page.wait_for_load_state` (load completion), `page.wait_for_url` (exact URL commit), `page.evaluate` (page main world, optionally a selected frame), `page.click` and `page.hover` (native mouse events at viewport coordinates), `page.check` and `page.uncheck` (native checkbox clicks), `page.type_text` (native keyboard character events), `page.press` (common named native key events), `page.fill` (CSS-selected editable elements), `page.focus_element` (CSS-selected focus), `page.select_option` (select by value), `page.goto`, `page.back`, `page.forward`, `page.reload`, `page.stop`, `page.close`, and `page.focus`; the full planned surface is in the TODO.
 
-An authenticated `GET /mcp` request with `Accept: text/event-stream` opens a
-server event stream. It sends standard `notifications/message` notifications
-for observed tab creation/closure, popup creation/closure, and navigation start,
-commit, and completion. Native tab state is sampled while at least one event
-stream is open; closing the HTTP connection stops sampling.
+Every MCP operation uses one JSON-RPC request per POST. A
+`subscriptions/listen` POST opens an SSE response for the requested
+`chromium-mcp://browser/events` resource. The server acknowledges the honored
+filter and sends `notifications/resources/updated` with the subscription ID
+when browser events change. Read the resource with
+`chromium-mcp://browser/events?after=<cursor>` to fetch event records; the
+journal retains the newest 256 records. Closing the SSE response stops its
+watch. GET is rejected with HTTP 405 for protocol revision `2026-07-28`.
 
 `page.visible_content` returns the main frame's visible text, headings, and
 links. It complements the cross-frame native accessibility snapshot.
@@ -40,15 +44,36 @@ network. Main-frame navigation lifecycle events also include native request
 and response headers. A native URL loader throttle also records subresource
 request and response headers, including CORS-exempt request headers, and
 captures response bodies as Base64 bytes while teeing the original stream to
-the page. A generated request ID links the request, response, and body events.
+the page. Each captured body is limited to 256 KiB; `captured_bytes`,
+`total_size`, `total_size_known`, and `truncated` describe the capture. At most
+8 response bodies are captured at once across a renderer; additional bodies
+are forwarded without capture and report `capture_skipped`. Each tee reads
+through a 64 KiB pending buffer and a 1 MiB bounded forwarding pipe, so a slow
+page consumer eventually backpressures the network pipe. At most 8 MiB of
+forwarding-pipe capacity and 2 MiB of captured body strings are active per
+renderer at once. A body event reports `forwarded_bytes`, the bytes accepted by
+the page-facing pipe. Network event queues are limited to 16 MiB and 1024
+events process-wide, with at most 16 queued events per page; older events are
+dropped when a limit is reached. Body events also report `capture_error` and
+the low-level `capture_error_result` when a pipe operation fails. A generated request ID links the request,
+response, and body events. Full-body retrieval is not provided; the body event
+contains only the finite captured prefix.
+Redirected subresource bodies report `capture_skipped` with reason
+`redirected_response`; the redirect-following loader forwards them without
+installing the body tee.
 The resource-completion event separately reports the final byte counts.
+Renderer interception requires both `BrowserAgentService` and the
+`--enable-browser-agent-service` switch and applies only to non-document
+requests from frame throttle providers with a local frame token. Worker
+throttle providers do not enter this page-associated capture path.
 `context.clear_http_cache` clears the selected context's native HTTP cache.
 `context.set_accept_language`, `context.set_referrers_enabled`, and
 `context.close_idle_connections` expose the corresponding native
 `NetworkContext` controls. `context.set_accept_language` also updates the
 context's native accepted-language preference and renderer settings.
-`resources/list` exposes `chromium-mcp://browser/version` and
-`chromium-mcp://browser/contexts`. `resources/read` returns their JSON content
+`resources/list` exposes `chromium-mcp://browser/version`,
+`chromium-mcp://browser/contexts`, and the subscribable
+`chromium-mcp://browser/events` resource. `resources/read` returns their JSON content
 with private, immediately stale cache hints. Unknown resource URIs return
 JSON-RPC `-32602`.
 `page.accept_dialog` and `page.dismiss_dialog` act on a page's active
@@ -76,10 +101,12 @@ Chromium build. `page.permission_status` reports both the browser permission
 and combined OS/device status for geolocation, camera, microphone, and
 notifications on the current document. OS and browser permission boundaries
 still apply.
-`page.find_elements` returns visible matches for a CSS selector, role, name,
-and/or text query, including viewport bounds and center points for native
-pointer tools. Pass a `frame_id` from `page.frames` to search a child frame;
-otherwise it searches the main frame. Name and text filters match substrings.
+`page.find_elements` returns viewport-intersecting matches for a CSS selector,
+role, name, and/or text query. `actionable` indicates whether the element is
+unobscured at its center. Coordinates are relative to the selected frame's
+viewport; child-frame coordinates need translation before using main-page
+native pointer tools. Name and text filters use case-sensitive substring
+matching.
 `page.set_user_agent` uses `WebContents::SetUserAgentOverride` for a page,
 marks its current navigation entry, and clears the override when passed an
 empty string. Reload the page to apply the change to its current document.
@@ -108,6 +135,32 @@ With `--browser-agent-trace-dir=<directory>`, `browser.start_trace` starts
 Chromium tracing for the requested categories and `browser.stop_trace` writes
 the completed JSON trace to a uniquely named file in that directory.
 
+For revision `2026-07-28`, send one JSON-RPC request per POST with
+`Content-Type: application/json`, `Accept: application/json, text/event-stream`,
+`MCP-Protocol-Version`, and `Mcp-Method`. Every request includes
+`params._meta.io.modelcontextprotocol/protocolVersion` and
+`params._meta.io.modelcontextprotocol/clientCapabilities`. Calls to
+`tools/call` and `resources/read` also mirror the tool name or URI in
+`Mcp-Name`; unsafe values use the published Base64 sentinel encoding. GET
+returns HTTP 405. A browser event subscription uses this POST body:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "events-1",
+  "method": "subscriptions/listen",
+  "params": {
+    "notifications": {
+      "resourceSubscriptions": ["chromium-mcp://browser/events"]
+    },
+    "_meta": {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      "io.modelcontextprotocol/clientCapabilities": {}
+    }
+  }
+}
+```
+
 Use MCP's standard JSON-RPC envelopes. Example tool call:
 
 ```json
@@ -117,7 +170,11 @@ Use MCP's standard JSON-RPC envelopes. Example tool call:
   "method": "tools/call",
   "params": {
     "name": "page.evaluate",
-    "arguments": { "page_id": "page_...", "expression": "document.title" }
+    "arguments": { "page_id": "page_...", "expression": "document.title" },
+    "_meta": {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      "io.modelcontextprotocol/clientCapabilities": {}
+    }
   }
 }
 ```

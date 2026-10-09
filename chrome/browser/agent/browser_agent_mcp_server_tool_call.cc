@@ -39,6 +39,7 @@
 #include "chrome/browser/agent/browser_agent_protocol.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_destroyer.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/browser_window/public/create_browser_window.h"
 #include "chrome/browser/ui/browser_window/public/profile_browser_collection.h"
@@ -136,195 +137,9 @@ std::string BrowserAgentMcpServer::HandleToolCall(
   }
   base::DictValue tool_result;
   std::string result_text;
-  if (tool_request.tool == "browser.version") {
-    tool_result.Set("product", std::string(version_info::GetProductName()));
-    tool_result.Set("version", std::string(version_info::GetVersionNumber()));
-    tool_result.Set("mcp_protocol_version", protocol::kMcpProtocolVersion);
-    result_text = base::StrCat({*tool_result.FindString("product"), " ",
-                                *tool_result.FindString("version")});
-  } else if (tool_request.tool == "browser.list_contexts") {
-    base::ListValue contexts;
-    base::DictValue regular_context;
-    regular_context.Set("context_id", default_context_id_);
-    regular_context.Set("off_the_record", false);
-    contexts.Append(std::move(regular_context));
-    for (Profile* off_the_record : profile_->GetAllOffTheRecordProfiles()) {
-      base::DictValue context;
-      context.Set("context_id", RegisterContext(off_the_record));
-      context.Set("off_the_record", true);
-      contexts.Append(std::move(context));
-    }
-    tool_result.Set("contexts", std::move(contexts));
-    result_text = "Listed browser contexts.";
-  } else if (tool_request.tool == "browser.create_context") {
-    Profile* off_the_record = profile_->GetPrimaryOTRProfile(true);
-    tool_result.Set("context_id", RegisterContext(off_the_record));
-    tool_result.Set("off_the_record", true);
-    result_text = "Created a private browser context.";
-  } else if (tool_request.tool == "browser.close_context") {
-    const std::string* context_id =
-        tool_request.arguments.FindString("context_id");
-    Profile* target = context_id ? ResolveContext(*context_id) : nullptr;
-    if (!target || target == profile_) {
-      tool_result.Set("error", "A live private context_id is required.");
-    } else {
-      ProfileBrowserCollection* context_browsers =
-          ProfileBrowserCollection::GetForProfile(target);
-      std::vector<BrowserWindowInterface*> open_browsers;
-      if (context_browsers) {
-        context_browsers->ForEach([&](BrowserWindowInterface* browser) {
-          open_browsers.push_back(browser);
-          return true;
-        });
-      }
-      std::erase_if(context_handles_,
-                    [&](const auto& entry) { return entry.second == target; });
-      std::erase_if(page_context_ids_, [&](const auto& entry) {
-        if (entry.second != *context_id) {
-          return false;
-        }
-        page_handles_.erase(entry.first);
-        console_observers_.erase(entry.first);
-        std::erase_if(frame_handles_, [&](const auto& frame_entry) {
-          return frame_entry.second.first == entry.first;
-        });
-        return true;
-      });
-      for (BrowserWindowInterface* browser : open_browsers) {
-        browser->GetWindow()->Close();
-      }
-      if (open_browsers.empty()) {
-        profile_->DestroyOffTheRecordProfile(target);
-      }
-      tool_result.Set("context_id", *context_id);
-      tool_result.Set("closed", true);
-      result_text = "Closed private browser context.";
-    }
-    if (result_text.empty()) {
-      result.Set("isError", true);
-      result_text = *tool_result.FindString("error");
-    }
-  } else if (tool_request.tool == "context.downloads") {
-    const std::string* requested_context_id =
-        tool_request.arguments.FindString("context_id");
-    const std::string context_id =
-        requested_context_id ? *requested_context_id : default_context_id_;
-    Profile* context = ResolveContext(context_id);
-    content::DownloadManager* manager =
-        context ? context->GetDownloadManager() : nullptr;
-    if (!manager) {
-      tool_result.Set("error", "Unknown or closed context_id.");
-      result.Set("isError", true);
-      result_text = *tool_result.FindString("error");
-    } else {
-      download::SimpleDownloadManager::DownloadVector downloads;
-      manager->GetAllDownloads(&downloads);
-      base::ListValue items;
-      for (download::DownloadItem* download : downloads) {
-        base::DictValue item;
-        item.Set("guid", download->GetGuid());
-        item.Set("url", download->GetURL().spec());
-        item.Set("target_path", download->GetTargetFilePath().AsUTF8Unsafe());
-        item.Set("received_bytes",
-                 static_cast<double>(download->GetReceivedBytes()));
-        item.Set("total_bytes", static_cast<double>(download->GetTotalBytes()));
-        item.Set("state", DownloadStateName(download->GetState()));
-        items.Append(std::move(item));
-      }
-      tool_result.Set("context_id", context_id);
-      tool_result.Set("downloads", std::move(items));
-      result_text = "Listed context downloads.";
-    }
-  } else if (tool_request.tool == "context.list_permissions") {
-    base::ListValue permissions;
-    for (const content_settings::ContentSettingsInfo* info :
-         *content_settings::ContentSettingsRegistry::GetInstance()) {
-      base::DictValue item;
-      item.Set("name", info->website_settings_info()->name());
-      base::ListValue settings;
-      for (ContentSetting candidate :
-           {CONTENT_SETTING_ALLOW, CONTENT_SETTING_BLOCK, CONTENT_SETTING_ASK,
-            CONTENT_SETTING_SESSION_ONLY}) {
-        if (info->IsSettingValid(candidate)) {
-          settings.Append(PermissionSettingName(candidate));
-        }
-      }
-      item.Set("settings", std::move(settings));
-      permissions.Append(std::move(item));
-    }
-    tool_result.Set("permissions", std::move(permissions));
-    result_text = "Listed native content settings.";
-  } else if (tool_request.tool == "context.permission" ||
-             tool_request.tool == "context.set_permission") {
-    const std::string* requested_context_id =
-        tool_request.arguments.FindString("context_id");
-    const std::string context_id =
-        requested_context_id ? *requested_context_id : default_context_id_;
-    const std::string* url_text = tool_request.arguments.FindString("url");
-    const std::string* permission_name =
-        tool_request.arguments.FindString("permission");
-    const std::string* setting_name =
-        tool_request.arguments.FindString("setting");
-    Profile* context = ResolveContext(context_id);
-    const GURL url = url_text ? GURL(*url_text) : GURL();
-    const std::optional<ContentSettingsType> type =
-        permission_name ? PermissionType(*permission_name) : std::nullopt;
-    const bool set_permission = tool_request.tool == "context.set_permission";
-    const std::optional<ContentSetting> desired_setting =
-        setting_name ? PermissionSetting(*setting_name) : std::nullopt;
-    const content_settings::ContentSettingsInfo* setting_info =
-        type ? content_settings::ContentSettingsRegistry::GetInstance()->Get(
-                   *type)
-             : nullptr;
-    if (!context || !url.is_valid() || !type ||
-        (set_permission && (!desired_setting || !setting_info ||
-                            !setting_info->IsSettingValid(*desired_setting)))) {
-      tool_result.Set(
-          "error",
-          "A live context, URL, permission, and valid setting are required.");
-      result.Set("isError", true);
-      result_text = *tool_result.FindString("error");
-    } else {
-      HostContentSettingsMap* settings_map =
-          HostContentSettingsMapFactory::GetForProfile(context);
-      if (set_permission) {
-        settings_map->SetContentSettingDefaultScope(url, url, *type,
-                                                    *desired_setting);
-      }
-      tool_result.Set("context_id", context_id);
-      tool_result.Set("url", url.spec());
-      tool_result.Set("permission", *permission_name);
-      tool_result.Set("setting",
-                      PermissionSettingName(
-                          settings_map->GetContentSetting(url, url, *type)));
-      result_text = set_permission ? "Set native site permission."
-                                   : "Read native site permission.";
-    }
-  } else if (tool_request.tool == "download.cancel") {
-    const std::string* requested_context_id =
-        tool_request.arguments.FindString("context_id");
-    const std::string context_id =
-        requested_context_id ? *requested_context_id : default_context_id_;
-    const std::string* guid = tool_request.arguments.FindString("guid");
-    Profile* context = ResolveContext(context_id);
-    content::DownloadManager* manager =
-        context ? context->GetDownloadManager() : nullptr;
-    download::DownloadItem* item =
-        manager && guid ? manager->GetDownloadByGuid(*guid) : nullptr;
-    if (!item) {
-      tool_result.Set("error",
-                      "A live context_id and download guid are required.");
-      result.Set("isError", true);
-      result_text = *tool_result.FindString("error");
-    } else {
-      item->Cancel(/*user_cancel=*/true);
-      tool_result.Set("guid", *guid);
-      tool_result.Set("cancel_requested", true);
-      tool_result.Set("cancelled",
-                      item->GetState() == download::DownloadItem::CANCELLED);
-      result_text = "Requested native download cancellation.";
-    }
-  } else {
+  std::string early_response;
+  if (!HandleBrowserContextToolCall(id, tool_request, tool_result, result,
+                                    result_text, &early_response)) {
     Profile* page_profile = profile_;
     std::string page_context_id = default_context_id_;
     if (tool_request.tool == "page.list" || tool_request.tool == "page.new") {
@@ -756,6 +571,9 @@ std::string BrowserAgentMcpServer::HandleToolCall(
       result_text = *tool_result.FindString("error");
     }
   }
+  if (!early_response.empty()) {
+    return early_response;
+  }
   base::ListValue content_items;
   base::DictValue text_content;
   text_content.Set("type", "text");
@@ -775,6 +593,39 @@ std::string BrowserAgentMcpServer::HandleToolCall(
                                    std::move(server_info)));
   response.Set("result", std::move(result));
   return base::WriteJson(base::Value(std::move(response))).value_or("{}");
+}
+
+void BrowserAgentMcpServer::MaybeDestroyOwnedContext(
+    std::string context_id,
+    base::WeakPtr<Profile> context_profile) {
+  if (!pending_context_destructions_.contains(context_id)) {
+    return;
+  }
+  Profile* target = context_profile.get();
+  if (!target) {
+    pending_context_destructions_.erase(context_id);
+    return;
+  }
+  bool has_open_windows = false;
+  if (ProfileBrowserCollection* browsers =
+          ProfileBrowserCollection::GetForProfile(target)) {
+    browsers->ForEach([&](BrowserWindowInterface*) {
+      has_open_windows = true;
+      return false;
+    });
+  }
+  if (has_open_windows) {
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+        FROM_HERE,
+        base::BindOnce(&BrowserAgentMcpServer::MaybeDestroyOwnedContext,
+                       weak_factory_.GetWeakPtr(), std::move(context_id),
+                       std::move(context_profile)),
+        base::Milliseconds(100));
+    return;
+  }
+  pending_context_destructions_.erase(context_id);
+  ProfileDestroyer::DestroyOTRProfileWhenAppropriateWithTimeout(
+      target, base::Seconds(60));
 }
 
 }  // namespace browser_agent

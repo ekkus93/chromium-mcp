@@ -390,7 +390,15 @@ bool BrowserAgentMcpServer::HandlePageEditTools(
         base::WriteJson(base::Value(*fill_value)).value_or("\"\"");
     const std::string script = base::StrCat(
         {"(() => { const e = document.querySelector(", selector_json,
-         "); if (!e) return {error: 'selector did not match'}; e.focus(); ",
+         "); if (!e) return {error: 'selector did not match'}; ",
+         "const expected = ", value_json,
+         "; const supportedInput = e instanceof HTMLInputElement && ",
+         "['text','search','email','url','tel','password','number'].includes(e.type); ",
+         "if (!(e.isContentEditable || supportedInput || e instanceof "
+         "HTMLTextAreaElement)) return {error: 'element is not a supported "
+         "editable control'}; ",
+         "if (e.disabled || e.readOnly) return {error: 'element is disabled "
+         "or read-only'}; e.focus(); ",
          "if (e.isContentEditable) { e.textContent = ", value_json,
          "; } else if (e instanceof HTMLInputElement || e instanceof "
          "HTMLTextAreaElement) { ",
@@ -402,7 +410,9 @@ bool BrowserAgentMcpServer::HandlePageEditTools(
          "'insertText', data: ",
          value_json,
          "})); e.dispatchEvent(new Event('change', {bubbles: true})); ",
-         "return {value: e.isContentEditable ? e.textContent : e.value}; "
+         "const actual = e.isContentEditable ? e.textContent : e.value; ",
+         "if (actual !== expected) return {error: 'value readback failed'}; ",
+         "return {value: actual}; "
          "})()"});
     content::ExecuteJavaScriptForAutomation(
         frame, base::UTF8ToUTF16(script),
@@ -423,6 +433,14 @@ bool BrowserAgentMcpServer::HandlePageEditTools(
                 if (const base::Value* value = result_dict->Find("value")) {
                   structured.Set("value", value->Clone());
                 }
+              }
+              const base::DictValue* result_dict = result.GetIfDict();
+              if (!result_dict || !result_dict->Find("value")) {
+                structured.Set("error", "Fill evaluation returned no value.");
+                std::move(reply).Run(MakeToolCallResponse(
+                    std::move(request_id), std::move(structured),
+                    "Fill evaluation returned no value.", true));
+                return;
               }
               structured.Set("page_id", std::move(page_id));
               structured.Set("filled", true);

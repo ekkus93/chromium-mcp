@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_AGENT_BROWSER_AGENT_CONSOLE_OBSERVER_H_
 
 #include <cstdint>
+#include <deque>
 #include <optional>
 #include <string>
 
@@ -65,6 +66,7 @@ class BrowserAgentConsoleObserver : public content::WebContentsObserver {
  private:
   base::ListValue messages_;
   base::ListValue network_events_;
+  std::deque<size_t> network_event_sizes_;
   std::string accept_language_;
   base::RepeatingCallback<void(std::string, std::string)>
       navigation_event_callback_;

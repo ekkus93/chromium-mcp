@@ -99,6 +99,14 @@ class BrowserAgentMcpServer : public net::HttpServer::Delegate,
   void CancelRequestOnUiThread(int connection_id);
   void StartEventStreamOnUiThread(int connection_id);
   void StopEventStreamOnUiThread(int connection_id);
+  void MaybeDestroyOwnedContext(std::string context_id,
+                                base::WeakPtr<Profile> profile);
+  bool HandleBrowserContextToolCall(const base::Value* id,
+                                    const protocol::Request& tool_request,
+                                    base::DictValue& tool_result,
+                                    base::DictValue& result,
+                                    std::string& result_text,
+                                    std::string* early_response);
   std::string HandleToolCall(const base::Value* id,
                              const base::DictValue& request);
   void PollBrowserEvents();
@@ -140,6 +148,8 @@ class BrowserAgentMcpServer : public net::HttpServer::Delegate,
   };
   std::map<int, PendingRequest> pending_requests_;
   std::set<int> event_stream_watches_;
+  base::ListValue browser_events_;
+  uint64_t next_browser_event_cursor_ = 1;
   std::map<std::string, BrowserPageSnapshot> event_page_snapshot_;
   base::RepeatingTimer event_poll_timer_;
   std::map<std::string, std::string> page_context_ids_;
@@ -147,6 +157,8 @@ class BrowserAgentMcpServer : public net::HttpServer::Delegate,
            std::pair<std::string, content::GlobalRenderFrameHostId>>
       frame_handles_;
   std::map<std::string, raw_ptr<Profile>> context_handles_;
+  std::set<std::string> owned_context_ids_;
+  std::set<std::string> pending_context_destructions_;
   std::map<std::string, std::string> context_accept_languages_;
   std::set<raw_ptr<Profile>> observed_context_profiles_;
   int port_ = -1;

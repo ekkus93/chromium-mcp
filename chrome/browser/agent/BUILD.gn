@@ -12,6 +12,7 @@ source_set("agent") {
     "browser_agent_mcp_server_protocol.cc",
     "browser_agent_mcp_server_protocol.h",
     "browser_agent_mcp_server_tool_call.cc",
+    "browser_agent_mcp_server_tool_call_context.cc",
     "browser_agent_mcp_server_tool_schemas.cc",
     "browser_agent_mcp_server_tools.cc",
     "browser_agent_mcp_server_tools_context.cc",

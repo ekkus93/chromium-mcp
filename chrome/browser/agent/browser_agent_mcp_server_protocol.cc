@@ -319,7 +319,9 @@ std::string BrowserAgentMcpServer::HandleJsonRpc(
     result.Set("supportedVersions", std::move(supported_versions));
     base::DictValue capabilities;
     capabilities.Set("tools", base::DictValue());
-    capabilities.Set("resources", base::DictValue());
+    base::DictValue resource_capabilities;
+    resource_capabilities.Set("subscribe", true);
+    capabilities.Set("resources", std::move(resource_capabilities));
     result.Set("capabilities", std::move(capabilities));
     result.Set("instructions",
                "Use Chromium-native browser tools to control this profile.");
@@ -432,7 +434,7 @@ std::string BrowserAgentMcpServer::HandleJsonRpc(
     tools.Append(MakeTool("page.frames", "List the current page frames.",
                           ObjectSchema({"page_id"}, {"page_id"})));
     tools.Append(MakeTool("page.find_elements",
-                          "Find visible elements by CSS, role, name, or text.",
+                          "Find viewport-intersecting elements by CSS, role, name, or text; report whether each center point is unobscured.",
                           ObjectSchema({"page_id", "frame_id", "selector",
                                         "role", "name", "text"},
                                        {"page_id"})));
@@ -450,7 +452,7 @@ std::string BrowserAgentMcpServer::HandleJsonRpc(
                                        {"page_id", "expression"})));
     tools.Append(
         MakeTool("page.fill",
-                 "Fill a CSS-selected input, textarea, or editable element.",
+                 "Fill a supported writable input, textarea, or contenteditable element and verify its resulting value. Dispatches bubbling input and change events.",
                  ObjectSchema({"page_id", "selector", "value"},
                               {"page_id", "selector", "value"})));
     tools.Append(MakeTool(
@@ -534,6 +536,15 @@ std::string BrowserAgentMcpServer::HandleJsonRpc(
                           "Regular and private profile contexts.");
     contexts_resource.Set("mimeType", "application/json");
     resources.Append(std::move(contexts_resource));
+    base::DictValue events_resource;
+    events_resource.Set("uri", "chromium-mcp://browser/events");
+    events_resource.Set("name", "Browser events");
+    events_resource.Set(
+        "description",
+        "Bounded browser event journal. Read with ?after=<cursor> to continue.");
+    events_resource.Set("mimeType", "application/json");
+    events_resource.Set("subscribe", true);
+    resources.Append(std::move(events_resource));
     result.Set("resources", std::move(resources));
     result.Set("ttlMs", 0);
     result.Set("cacheScope", "private");
@@ -541,7 +552,8 @@ std::string BrowserAgentMcpServer::HandleJsonRpc(
     const base::DictValue* params = request.FindDict("params");
     const std::string* uri = params ? params->FindString("uri") : nullptr;
     if (!uri || (*uri != "chromium-mcp://browser/version" &&
-                 *uri != "chromium-mcp://browser/contexts")) {
+                 *uri != "chromium-mcp://browser/contexts" &&
+                 !base::StartsWith(*uri, "chromium-mcp://browser/events"))) {
       return MakeJsonRpcError(id->Clone(), -32602, "Resource not found.");
     }
     base::DictValue content;
@@ -553,7 +565,7 @@ std::string BrowserAgentMcpServer::HandleJsonRpc(
       resource_data.Set("version",
                         std::string(version_info::GetVersionNumber()));
       resource_data.Set("mcp_protocol_version", protocol::kMcpProtocolVersion);
-    } else {
+    } else if (*uri == "chromium-mcp://browser/contexts") {
       base::ListValue contexts;
       base::DictValue regular;
       regular.Set("context_id", default_context_id_);
@@ -566,6 +578,24 @@ std::string BrowserAgentMcpServer::HandleJsonRpc(
         contexts.Append(std::move(context));
       }
       resource_data.Set("contexts", std::move(contexts));
+    } else {
+      int64_t after_cursor = 0;
+      const size_t cursor_position = uri->find("?after=");
+      if (cursor_position != std::string::npos) {
+        base::StringToInt64(uri->substr(cursor_position + 7), &after_cursor);
+      }
+      base::ListValue events;
+      for (const base::Value& entry : browser_events_) {
+        const base::DictValue* event = entry.GetIfDict();
+        const std::optional<double> cursor =
+            event ? event->FindDouble("cursor") : std::nullopt;
+        if (cursor && *cursor > after_cursor) {
+          events.Append(entry.Clone());
+        }
+      }
+      resource_data.Set("events", std::move(events));
+      resource_data.Set("next_cursor",
+                        static_cast<double>(next_browser_event_cursor_ - 1));
     }
     content.Set(
         "text",

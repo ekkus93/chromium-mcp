@@ -35,6 +35,8 @@ Project entry points:
 
 - [Agent Browser Specification](docs/CHROMIUM_MCP_AGENT_BROWSER_SPEC.md)
 - [Agent Browser TODO](docs/CHROMIUM_MCP_AGENT_BROWSER_TODO.md)
+- [Agent Browser Remediation Specification](docs/CHROMIUM_MCP_AGENT_BROWSER_REMEDIATION_SPEC.md)
+- [Agent Browser Remediation TODO](docs/CHROMIUM_MCP_AGENT_BROWSER_REMEDIATION_TODO.md)
 - [Project Orientation](docs/PROJECT_ORIENTATION.md)
 - [Security Model](docs/SECURITY_MODEL.md)
 - [Tool Contract](docs/TOOL_CONTRACT.md)

@@ -1,7 +1,8 @@
 # Chromium MCP Agent Browser TODO
 
-Status: Linux implementation complete; macOS, Windows, and ChromeOS permission verification is deferred
+Status: Linux implementation and 2026-10-09 remediation qualification complete; macOS, Windows, and ChromeOS permission verification is deferred
 Companion spec: `docs/CHROMIUM_MCP_AGENT_BROWSER_SPEC.md`
+Current remediation status: [`CHROMIUM_MCP_AGENT_BROWSER_REMEDIATION_TODO.md`](CHROMIUM_MCP_AGENT_BROWSER_REMEDIATION_TODO.md)
 
 ## Working rules
 
@@ -127,6 +128,10 @@ Companion spec: `docs/CHROMIUM_MCP_AGENT_BROWSER_SPEC.md`
 
 ## Latest validation (2026-10-09)
 
+This historical MVP validation is supplemented by the dated remediation
+record. Do not use the MVP completion boxes below as evidence that the current
+remediation acceptance criteria have passed.
+
 - `taskset -c 0 env PATH="/home/phil/depot_tools:$PATH" autoninja -j1 -C
   out/Default chrome` completed successfully.
 - `npm test --prefix agent_protocol` passed (2 tests).
@@ -157,5 +162,9 @@ Companion spec: `docs/CHROMIUM_MCP_AGENT_BROWSER_SPEC.md`
   integration runs passed on the same platform with the same granted/denied/
   true status values. The original camera and microphone switches were restored
   to `false` after the runs.
+- The 2026-10-09 remediation adds current POST subscription, header validation,
+  private-context ownership, network capture-bound, and element-result checks;
+  see the linked remediation checklist for the rebuilt binary and regression
+  suite evidence.
 - `python3 -m py_compile agent_protocol/tests/chromium_mcp_integration.py`
   passed; `git diff --check` passed.

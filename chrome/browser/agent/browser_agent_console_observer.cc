@@ -4,8 +4,10 @@
 
 #include "chrome/browser/agent/browser_agent_console_observer.h"
 
+#include <atomic>
 #include <utility>
 
+#include "base/json/json_writer.h"
 #include "base/strings/utf_string_conversions.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
@@ -17,13 +19,35 @@
 
 namespace browser_agent {
 
+namespace {
+constexpr size_t kMaximumBufferedNetworkEvents = 16;
+constexpr size_t kMaximumGlobalBufferedNetworkEvents = 1024;
+constexpr size_t kMaximumNetworkEventBytes = 512 * 1024;
+constexpr size_t kMaximumGlobalBufferedNetworkBytes = 16 * 1024 * 1024;
+std::atomic_size_t g_buffered_network_event_count{0};
+std::atomic_size_t g_buffered_network_event_bytes{0};
+
+void ReleaseNetworkEventSlots(size_t count, size_t bytes) {
+  if (count) {
+    g_buffered_network_event_count.fetch_sub(count, std::memory_order_relaxed);
+    g_buffered_network_event_bytes.fetch_sub(bytes, std::memory_order_relaxed);
+  }
+}
+}  // namespace
+
 BrowserAgentConsoleObserver::BrowserAgentConsoleObserver(
     content::WebContents* contents,
     std::string accept_language)
     : content::WebContentsObserver(contents),
       accept_language_(std::move(accept_language)) {}
 
-BrowserAgentConsoleObserver::~BrowserAgentConsoleObserver() = default;
+BrowserAgentConsoleObserver::~BrowserAgentConsoleObserver() {
+  size_t bytes = 0;
+  for (size_t event_size : network_event_sizes_) {
+    bytes += event_size;
+  }
+  ReleaseNetworkEventSlots(network_events_.size(), bytes);
+}
 
 void BrowserAgentConsoleObserver::SetAcceptLanguage(
     std::string accept_language) {
@@ -40,11 +64,46 @@ base::ListValue BrowserAgentConsoleObserver::ReadAndClear() {
 }
 
 base::ListValue BrowserAgentConsoleObserver::ReadAndClearNetworkEvents() {
+  size_t bytes = 0;
+  for (size_t event_size : network_event_sizes_) {
+    bytes += event_size;
+  }
+  ReleaseNetworkEventSlots(network_events_.size(), bytes);
+  network_event_sizes_.clear();
   return std::exchange(network_events_, base::ListValue());
 }
 
 void BrowserAgentConsoleObserver::AddNetworkEvent(base::DictValue event) {
-  network_events_.Append(event.Clone());
+  const std::string serialized =
+      base::WriteJson(base::Value(event.Clone())).value_or(std::string());
+  if (serialized.size() > kMaximumNetworkEventBytes) {
+    return;
+  }
+  if (network_events_.size() >= kMaximumBufferedNetworkEvents) {
+    const size_t removed_size = network_event_sizes_.front();
+    network_events_.erase(network_events_.begin());
+    network_event_sizes_.pop_front();
+    ReleaseNetworkEventSlots(1, removed_size);
+  }
+  const size_t buffered_events =
+      g_buffered_network_event_count.fetch_add(1, std::memory_order_relaxed);
+  if (buffered_events >= kMaximumGlobalBufferedNetworkEvents) {
+    g_buffered_network_event_count.fetch_sub(1, std::memory_order_relaxed);
+    return;
+  }
+  size_t buffered_bytes =
+      g_buffered_network_event_bytes.load(std::memory_order_relaxed);
+  do {
+    if (serialized.size() >
+        kMaximumGlobalBufferedNetworkBytes - buffered_bytes) {
+      g_buffered_network_event_count.fetch_sub(1, std::memory_order_relaxed);
+      return;
+    }
+  } while (!g_buffered_network_event_bytes.compare_exchange_weak(
+      buffered_bytes, buffered_bytes + serialized.size(),
+      std::memory_order_relaxed));
+  network_events_.Append(std::move(event));
+  network_event_sizes_.push_back(serialized.size());
 }
 
 void BrowserAgentConsoleObserver::DidStartNavigation(
@@ -70,7 +129,7 @@ void BrowserAgentConsoleObserver::DidStartNavigation(
     request_headers.Append(std::move(header));
   }
   item.Set("request_headers", std::move(request_headers));
-  network_events_.Append(std::move(item));
+  AddNetworkEvent(std::move(item));
 }
 
 void BrowserAgentConsoleObserver::DidFinishNavigation(
@@ -104,7 +163,7 @@ void BrowserAgentConsoleObserver::DidFinishNavigation(
     }
     item.Set("response_headers", std::move(response_headers));
   }
-  network_events_.Append(std::move(item));
+  AddNetworkEvent(std::move(item));
 }
 
 void BrowserAgentConsoleObserver::DidStopLoading() {
@@ -140,7 +199,7 @@ void BrowserAgentConsoleObserver::ResourceLoadComplete(
   if (source_frame) {
     item.Set("frame_url", source_frame->GetLastCommittedURL().spec());
   }
-  network_events_.Append(std::move(item));
+  AddNetworkEvent(std::move(item));
 }
 
 void BrowserAgentConsoleObserver::OnDidAddMessageToConsole(

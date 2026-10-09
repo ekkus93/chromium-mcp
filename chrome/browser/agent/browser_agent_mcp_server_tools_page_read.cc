@@ -179,30 +179,64 @@ bool BrowserAgentMcpServer::HandlePageReadTools(
       const roleOf = e => {
         const explicit = e.getAttribute('role');
         if (explicit) return explicit;
-        if (e.matches('button,input[type=button],input[type=submit]')) return 'button';
+        if (e.matches('button,input[type=button],input[type=submit],input[type=reset]')) return 'button';
         if (e.matches('a[href]')) return 'link';
         if (e.matches('input[type=checkbox]')) return 'checkbox';
         if (e.matches('input[type=radio]')) return 'radio';
-        if (e.matches('input:not([type]),input[type=text],input[type=email],input[type=password],textarea')) return 'textbox';
+        if (e.matches('input[type=range]')) return 'slider';
+        if (e.matches('input[type=number]')) return 'spinbutton';
+        if (e.matches('input:not([type]),input[type=text],input[type=email],input[type=password],input[type=search],input[type=tel],input[type=url],textarea')) return 'textbox';
+        if (e.matches('select[multiple]')) return 'listbox';
         if (e.matches('select')) return 'combobox';
         if (e.matches('h1,h2,h3,h4,h5,h6')) return 'heading';
         if (e.matches('img')) return 'img';
+        if (e.matches('ul,ol')) return 'list';
+        if (e.matches('li')) return 'listitem';
+        if (e.matches('table')) return 'table';
+        if (e.matches('tr')) return 'row';
+        if (e.matches('th')) return 'columnheader';
+        if (e.matches('td')) return 'cell';
+        if (e.matches('form')) return 'form';
+        if (e.matches('nav')) return 'navigation';
+        if (e.matches('main')) return 'main';
+        if (e.matches('header')) return 'banner';
+        if (e.matches('footer')) return 'contentinfo';
         return '';
       };
-      const nameOf = e => e.getAttribute('aria-label') ||
-          (e.labels && Array.from(e.labels).map(l => l.innerText).join(' ')) ||
-          e.getAttribute('alt') || (e.innerText || '').trim() ||
-          e.getAttribute('title') || '';
+      const nameOf = e => {
+        const labelledby = e.getAttribute('aria-labelledby');
+        if (labelledby) {
+          const name = labelledby.trim().split(/\\s+/).map(id =>
+              document.getElementById(id)?.innerText || '').join(' ').trim();
+          if (name) return name;
+        }
+        const aria = e.getAttribute('aria-label');
+        if (aria) return aria;
+        if (e.labels && e.labels.length)
+          return Array.from(e.labels).map(l => l.innerText.trim()).join(' ');
+        if (e.matches('img,area,input[type=image]')) return e.getAttribute('alt') || '';
+        if (e.matches('input[type=button],input[type=submit],input[type=reset]')) return e.value || '';
+        return (e.innerText || e.textContent || '').trim() || e.getAttribute('title') || '';
+      };
       try {
         return Array.from(document.querySelectorAll(q.selector || '*'))
-            .filter(e => e.getClientRects().length &&
-                getComputedStyle(e).visibility !== 'hidden')
+            .filter(e => {
+              const s = getComputedStyle(e);
+              const r = e.getBoundingClientRect();
+              return s.display !== 'none' && s.visibility !== 'hidden' &&
+                  Number(s.opacity) > 0 && r.width > 0 && r.height > 0 &&
+                  r.right > 0 && r.bottom > 0 && r.left < innerWidth &&
+                  r.top < innerHeight;
+            })
             .map(e => {
               const r = e.getBoundingClientRect();
+              const x = r.left + r.width / 2, y = r.top + r.height / 2;
+              const hit = document.elementFromPoint(x, y);
+              const actionable = !!hit && (hit === e || e.contains(hit));
               return {tag: e.tagName.toLowerCase(), role: roleOf(e),
                 name: nameOf(e), text: (e.innerText || '').trim(),
                 x: r.x, y: r.y, width: r.width, height: r.height,
-                center_x: r.x + r.width / 2, center_y: r.y + r.height / 2};
+                center_x: x, center_y: y, actionable};
             })
             .filter(e => (!q.role || e.role === q.role) &&
                 (!q.name || e.name.includes(q.name)) &&

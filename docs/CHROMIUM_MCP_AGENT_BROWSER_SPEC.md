@@ -32,7 +32,22 @@ The browser process hosts the MCP endpoint and owns all tool execution. The serv
 
 ## 3. MCP transport
 
-Implement the current MCP Streamable HTTP transport on an explicitly enabled loopback endpoint. The endpoint must reject web-origin requests and authenticate local MCP clients. Transport authentication protects the endpoint from unrelated callers; it must not filter which browser tools the authenticated client can use. Keep the MCP wire format compatible with the published MCP specification and test it with a standard MCP client.
+The implementation targets MCP Streamable HTTP revision `2026-07-28` on an
+explicitly enabled loopback endpoint. Each request is a JSON-RPC POST with
+mirrored `MCP-Protocol-Version` and `Mcp-Method` headers; GET returns HTTP 405.
+Long-lived changes use `subscriptions/listen` POST SSE. Browser tab and
+navigation changes update the subscribable
+`chromium-mcp://browser/events` resource, and clients read its bounded journal
+with a cursor. The endpoint rejects web-origin requests and authenticates
+local MCP clients. Transport authentication protects the endpoint from
+unrelated callers; it does not filter which browser tools the authenticated
+client can use. Interoperability and current validation evidence are recorded
+in the [remediation checklist](CHROMIUM_MCP_AGENT_BROWSER_REMEDIATION_TODO.md).
+
+Each successful `browser.create_context` call owns a distinct ephemeral
+off-the-record profile created with Chromium's window-capable DevTools profile
+ID. Closing that handle closes only its windows and destroys that owned profile
+after dependent objects release it.
 
 ## 4. Capability surface
 

@@ -1,5 +1,12 @@
 # Chromium MCP Agent Browser Handoff
 
+Historical snapshot: this handoff predates the current source revision and
+contains obsolete build and event-stream validation statements. Use the
+canonical [TODO](CHROMIUM_MCP_AGENT_BROWSER_TODO.md) and
+[remediation checklist](CHROMIUM_MCP_AGENT_BROWSER_REMEDIATION_TODO.md) for
+current status. The dated `CHROMIUM_MCP_AGENT_BROWSER_HANDOFF_2026-10-09.md`
+is retained as historical evidence.
+
 Updated: 2026-10-08
 
 ## Project State

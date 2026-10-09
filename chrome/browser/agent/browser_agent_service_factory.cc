@@ -23,8 +23,11 @@ BrowserAgentService* BrowserAgentServiceFactory::GetForProfile(
 }
 
 BrowserAgentServiceFactory::BrowserAgentServiceFactory()
-    : ProfileKeyedServiceFactory("BrowserAgentService",
-                                 ProfileSelections::BuildForRegularProfile()) {}
+    // Off-the-record pages report network events to the service owned by
+    // their original profile while preserving their own WebContents identity.
+    : ProfileKeyedServiceFactory(
+          "BrowserAgentService",
+          ProfileSelections::BuildRedirectedInIncognito()) {}
 
 BrowserAgentServiceFactory::~BrowserAgentServiceFactory() = default;
 

@@ -3,159 +3,6 @@
 import base64
 import json
 import time
-from http.client import HTTPConnection
-from urllib.parse import urlsplit
-
-
-def run_storage_download_scenarios(state):
-    call_tool = state.call_tool
-    request = state.request
-    meta = state.meta
-    endpoint = state.endpoint
-    token = state.token
-    fixture_server = state.fixture_server
-    profile = state.profile
-    upload_path = state.upload_path
-    page_id = state.page_id
-    cookie_url = state.cookie_url
-    PROTOCOL_VERSION = state.protocol_version
-    set_storage = call_tool(
-        "page.set_storage",
-        {
-            "page_id": page_id,
-            "local": {"local_key": "local_value"},
-            "session": {"session_key": "session_value"},
-        },
-    )
-    assert set_storage["local"]["local_key"] == "local_value"
-    storage = call_tool("page.storage_state", {"page_id": page_id})
-    assert storage["local"]["local_key"] == "local_value"
-    assert storage["session"]["session_key"] == "session_value"
-    storage_origins = call_tool("context.local_storage_origins", {})[
-        "origins"
-    ]
-    assert any(item["origin"] == cookie_url.rstrip("/") for item in storage_origins)
-    storage_key = next(
-        item["storage_key"]
-        for item in storage_origins
-        if item["origin"] == cookie_url.rstrip("/")
-    )
-    assert call_tool(
-        "context.clear_local_storage", {"storage_key": storage_key}
-    )["cleared"]
-    assert call_tool(
-        "page.prepare_file_upload",
-        {"page_id": page_id, "paths": [str(upload_path)]},
-    )["ready"]
-    upload_bounds = json.loads(
-        call_tool(
-            "page.evaluate",
-            {
-                "page_id": page_id,
-                "expression": "JSON.stringify((r => ({x:r.x+r.width/2,y:r.y+r.height/2}))(document.querySelector('#upload').getBoundingClientRect()))",
-            },
-        )["value"]
-    )
-    assert call_tool(
-        "page.click",
-        {
-            "page_id": page_id,
-            "x": round(upload_bounds["x"]),
-            "y": round(upload_bounds["y"]),
-        },
-    )["clicked"]
-    uploaded_name = None
-    for _ in range(20):
-        uploaded_name = call_tool(
-            "page.evaluate",
-            {
-                "page_id": page_id,
-                "expression": "document.querySelector('#upload').files[0]?.name || null",
-            },
-        )["value"]
-        if uploaded_name:
-            break
-        time.sleep(0.1)
-    assert uploaded_name == upload_path.name
-    found_buttons = call_tool(
-        "page.find_elements",
-        {"page_id": page_id, "role": "button", "name": "Click"},
-    )["elements"]
-    assert len(found_buttons) == 1
-    assert found_buttons[0]["center_x"] > 0
-    assert call_tool(
-        "page.find_elements",
-        {"page_id": page_id, "role": "heading", "text": "Fixture heading"},
-    )["elements"][0]["tag"] == "h1"
-    download_path = profile / "download-fixture.txt"
-    download_url = f"http://127.0.0.1:{fixture_server.server_port}/download"
-    started_download = call_tool(
-        "page.download",
-        {"page_id": page_id, "url": download_url, "path": str(download_path)},
-    )
-    assert started_download["download_guid"]
-    download_item = None
-    for _ in range(50):
-        download_item = next(
-            (
-                item
-                for item in call_tool("context.downloads", {})["downloads"]
-                if item["guid"] == started_download["download_guid"]
-            ),
-            None,
-        )
-        if download_item and download_item["state"] == "complete":
-            break
-        time.sleep(0.1)
-    assert download_item and download_item["state"] == "complete"
-    assert call_tool(
-        "download.wait", {"guid": started_download["download_guid"]}
-    )["state"] == "complete"
-    assert download_path.read_bytes() == b"native download fixture\n"
-    slow_download = call_tool(
-        "page.download",
-        {
-            "page_id": page_id,
-            "url": f"http://127.0.0.1:{fixture_server.server_port}/slow_download",
-            "path": str(profile / "slow-download.bin"),
-        },
-    )
-    cancelled_download = call_tool(
-        "download.cancel", {"guid": slow_download["download_guid"]}
-    )
-    assert cancelled_download["cancel_requested"]
-    assert cancelled_download["cancelled"]
-    assert call_tool(
-        "download.wait", {"guid": slow_download["download_guid"]}
-    )["state"] == "cancelled"
-    target = urlsplit(endpoint)
-    cancelled_wait = HTTPConnection(target.hostname, target.port, timeout=5)
-    cancelled_wait.request(
-        "POST",
-        target.path,
-        body=json.dumps(
-            request(
-                "tools/call",
-                {
-                    "name": "page.wait_for_url",
-                    "arguments": {
-                        "page_id": page_id,
-                        "url": f"http://127.0.0.1:{fixture_server.server_port}/never",
-                    },
-                    **meta,
-                },
-            )
-        ),
-        headers={
-            "Content-Type": "application/json",
-            "MCP-Protocol-Version": PROTOCOL_VERSION,
-            "Mcp-Method": "tools/call",
-            "Mcp-Name": "page.wait_for_url",
-            "Authorization": f"Bearer {token}",
-        },
-    )
-    cancelled_wait.close()
-    assert call_tool("page.get_info", {"page_id": page_id})["page_id"] == page_id
 
 
 def run_page_read_scenarios(state):
@@ -180,14 +27,13 @@ def run_page_read_scenarios(state):
     assert visible["headings"] == [{"level": 1, "text": "Fixture heading"}]
     assert any(link["text"] == "Next" for link in visible["links"])
     call_tool("page.console_messages", {"page_id": page_id})
-    initial_network_events = call_tool(
-        "page.network_events", {"page_id": page_id}
-    )["events"]
+    initial_network_events = call_tool("page.network_events", {"page_id": page_id})[
+        "events"
+    ]
     main_navigation = next(
         item
         for item in initial_network_events
-        if item["event_type"] == "navigation_response"
-        and item["url"].endswith("/slow")
+        if item["event_type"] == "navigation_response" and item["url"].endswith("/slow")
     )
     assert any(
         header["name"].lower() == "x-mcp-fixture"
@@ -197,8 +43,7 @@ def run_page_read_scenarios(state):
     navigation_request = next(
         item
         for item in initial_network_events
-        if item["event_type"] == "navigation_request"
-        and item["url"].endswith("/slow")
+        if item["event_type"] == "navigation_request" and item["url"].endswith("/slow")
     )
     assert navigation_request["request_headers"]
     call_tool(
@@ -253,15 +98,18 @@ def run_page_read_scenarios(state):
     assert completed_fetch["request_id"] > 0
     assert completed_fetch["request_destination"] >= 0
     assert completed_fetch["total_received_bytes"] > 0
-    subresource_request = next(
+    matching_requests = [
         item
         for item in network_events
-        if item["event_type"] == "subresource_request"
-        and item["url"].endswith("/next")
-    )
+        if item["event_type"] == "subresource_request" and item["url"].endswith("/next")
+    ]
+    assert matching_requests, [
+        (item.get("event_type"), item.get("url", item.get("final_url")))
+        for item in network_events
+    ]
+    subresource_request = matching_requests[0]
     assert any(
-        header["name"].lower() == "x-mcp-request"
-        and header["value"] == "captured"
+        header["name"].lower() == "x-mcp-request" and header["value"] == "captured"
         for header in subresource_request["request_headers"]
     )
     subresource_response = next(
@@ -281,11 +129,178 @@ def run_page_read_scenarios(state):
         if item["event_type"] == "subresource_response_body"
         and item["request_id"] == subresource_request["request_id"]
     )
-    decoded_subresource_body = base64.b64decode(
-        subresource_body["body_base64"]
-    )
+    decoded_subresource_body = base64.b64decode(subresource_body["body_base64"])
     assert subresource_body["body_bytes"] == len(decoded_subresource_body)
     assert b"Slow fixture" in decoded_subresource_body
+    call_tool(
+        "page.evaluate",
+        {
+            "page_id": page_id,
+            "expression": "window.largeFetchResult = null; fetch('/large').then(r => r.arrayBuffer()).then(b => { window.largeFetchResult = {size:b.byteLength, first:new Uint8Array(b)[0], last:new Uint8Array(b)[b.byteLength-1]}; })",
+        },
+    )
+    large_result = None
+    for _ in range(50):
+        result = call_tool(
+            "page.evaluate",
+            {"page_id": page_id, "expression": "window.largeFetchResult"},
+        )["value"]
+        if isinstance(result, dict) and result:
+            large_result = result
+            break
+        time.sleep(0.1)
+    assert large_result == {"size": 1024 * 1024, "first": 76, "last": 76,}, {
+        "result": large_result,
+        "events": [
+            {
+                key: event.get(key)
+                for key in (
+                    "event_type",
+                    "total_size",
+                    "captured_bytes",
+                    "forwarded_bytes",
+                    "truncated",
+                    "capture_error",
+                    "capture_error_result",
+                    "request_id",
+                )
+            }
+            for event in call_tool("page.network_events", {"page_id": page_id})[
+                "events"
+            ]
+            if event.get("request_url", "").endswith("/large")
+        ],
+    }
+    large_body = None
+    for _ in range(30):
+        events = call_tool("page.network_events", {"page_id": page_id})["events"]
+        large_body = next(
+            (
+                item
+                for item in events
+                if item["event_type"] == "subresource_response_body"
+                and item["request_url"].endswith("/large")
+            ),
+            None,
+        )
+        if large_body:
+            break
+        time.sleep(0.1)
+    assert large_body is not None
+    encoded_large_body = base64.b64decode(large_body["body_base64"], validate=True)
+    assert len(encoded_large_body) == 256 * 1024
+    assert large_body["captured_bytes"] == 256 * 1024
+    assert large_body["forwarded_bytes"] == 1024 * 1024
+    assert not large_body["capture_error"]
+    assert large_body["total_size"] == 1024 * 1024
+    assert large_body["truncated"] is True
+    call_tool(
+        "page.evaluate",
+        {
+            "page_id": page_id,
+            "expression": "window.slowFetchResult = null; fetch('/large').then(async r => { const reader = r.body.getReader(); let size = 0; for (;;) { const part = await reader.read(); if (part.done) break; size += part.value.length; await new Promise(resolve => setTimeout(resolve, 5)); } window.slowFetchResult = {size}; }).catch(e => { window.slowFetchResult = {error:String(e)}; })",
+        },
+    )
+    slow_result = None
+    for _ in range(100):
+        result = call_tool(
+            "page.evaluate",
+            {"page_id": page_id, "expression": "window.slowFetchResult"},
+        )["value"]
+        if isinstance(result, dict) and result:
+            slow_result = result
+            break
+        time.sleep(0.1)
+    assert slow_result == {"size": 1024 * 1024}, slow_result
+    call_tool(
+        "page.evaluate",
+        {
+            "page_id": page_id,
+            "expression": "window.redirectResult = null; fetch('/redirect').then(r => r.text()).then(text => { window.redirectResult = {text, url:location.href}; }).catch(e => { window.redirectResult = {error:String(e)}; })",
+        },
+    )
+    redirect_result = None
+    for _ in range(50):
+        result = call_tool(
+            "page.evaluate",
+            {"page_id": page_id, "expression": "window.redirectResult"},
+        )["value"]
+        if isinstance(result, dict) and result:
+            redirect_result = result
+            break
+        time.sleep(0.1)
+    redirect_events = []
+    for _ in range(20):
+        redirect_events.extend(
+            call_tool("page.network_events", {"page_id": page_id})["events"]
+        )
+        if any(
+            event["event_type"] == "subresource_response_body"
+            and event.get("request_url", "").endswith("/redirect")
+            for event in redirect_events
+        ):
+            break
+        time.sleep(0.05)
+    assert redirect_result == {
+        "text": "redirect target body",
+        "url": call_tool("page.get_info", {"page_id": page_id})["url"],
+    }, {
+        "result": redirect_result,
+        "events": [
+            {
+                key: event.get(key)
+                for key in (
+                    "event_type",
+                    "url",
+                    "final_url",
+                    "http_status",
+                    "net_error",
+                    "request_id",
+                    "request_url",
+                    "body_bytes",
+                    "forwarded_bytes",
+                    "total_size",
+                    "capture_error",
+                    "capture_error_result",
+                )
+            }
+            for event in redirect_events
+            if event.get(
+                "url", event.get("final_url", event.get("request_url", ""))
+            ).endswith(("/redirect", "/redirected"))
+        ],
+    }
+    assert any(
+        event["event_type"] == "resource_complete"
+        and event["final_url"].endswith("/redirected")
+        for event in redirect_events
+    ), redirect_events
+    redirected_body = next(
+        event
+        for event in redirect_events
+        if event["event_type"] == "subresource_response_body"
+        and event.get("request_url", "").endswith("/redirect")
+    )
+    assert redirected_body["capture_skipped"]
+    assert redirected_body["capture_skip_reason"] == "redirected_response"
+    call_tool(
+        "page.evaluate",
+        {
+            "page_id": page_id,
+            "expression": "window.cancelResult = null; const controller = new AbortController(); setTimeout(() => controller.abort(), 50); fetch('/continuous', {signal:controller.signal}).then(r => r.arrayBuffer()).then(b => { window.cancelResult = {aborted:false,size:b.byteLength}; }).catch(e => { window.cancelResult = {aborted:e.name === 'AbortError'}; })",
+        },
+    )
+    cancel_result = None
+    for _ in range(50):
+        result = call_tool(
+            "page.evaluate",
+            {"page_id": page_id, "expression": "window.cancelResult"},
+        )["value"]
+        if isinstance(result, dict) and result:
+            cancel_result = result
+            break
+        time.sleep(0.1)
+    assert cancel_result == {"aborted": True}, cancel_result
     call_tool(
         "page.evaluate",
         {
@@ -298,17 +313,22 @@ def run_page_read_scenarios(state):
         console_messages.extend(
             call_tool("page.console_messages", {"page_id": page_id})["messages"]
         )
-        if any("fixture console warning" in item["message"] for item in console_messages):
+        if any(
+            "fixture console warning" in item["message"] for item in console_messages
+        ):
             break
         time.sleep(0.1)
     assert any(
         item["level"] == 2 and "fixture console warning" in item["message"]
         for item in console_messages
     )
-    assert call_tool(
-        "page.evaluate",
-        {"page_id": page_id, "expression": "document.title"},
-    )["value"] == "Slow fixture"
+    assert (
+        call_tool(
+            "page.evaluate",
+            {"page_id": page_id, "expression": "document.title"},
+        )["value"]
+        == "Slow fixture"
+    )
     frames = []
     child_frame = None
     for _ in range(20):
@@ -340,14 +360,17 @@ def run_page_read_scenarios(state):
         child_frame,
         child_evaluation,
     )
-    assert call_tool(
-        "page.evaluate",
-        {
-            "page_id": page_id,
-            "frame_id": child_frame["frame_id"],
-            "expression": "location.origin",
-        },
-    )["value"] == "null"
+    assert (
+        call_tool(
+            "page.evaluate",
+            {
+                "page_id": page_id,
+                "frame_id": child_frame["frame_id"],
+                "expression": "location.origin",
+            },
+        )["value"]
+        == "null"
+    )
     assert call_tool(
         "page.find_elements",
         {
@@ -357,13 +380,16 @@ def run_page_read_scenarios(state):
             "text": "child frame",
         },
     )["elements"]
-    assert call_tool(
-        "page.evaluate",
-        {
-            "page_id": page_id,
-            "expression": "document.title = 'Evaluated directly'",
-        },
-    )["value"] == "Evaluated directly"
+    assert (
+        call_tool(
+            "page.evaluate",
+            {
+                "page_id": page_id,
+                "expression": "document.title = 'Evaluated directly'",
+            },
+        )["value"]
+        == "Evaluated directly"
+    )
 
 
 def run_page_interaction_scenarios(state):
@@ -499,46 +525,58 @@ def run_page_interaction_scenarios(state):
             break
         time.sleep(0.1)
     assert dialog_dismissed
-    assert call_tool(
-        "page.evaluate",
-        {"page_id": page_id, "expression": "window.promptResult"},
-    )["value"] is None
-    assert call_tool(
-        "page.check", {"page_id": page_id, "selector": "#agree"}
-    )["checked"]
+    assert (
+        call_tool(
+            "page.evaluate",
+            {"page_id": page_id, "expression": "window.promptResult"},
+        )["value"]
+        is None
+    )
+    assert call_tool("page.check", {"page_id": page_id, "selector": "#agree"})[
+        "checked"
+    ]
     checkbox_checked = False
     for _ in range(20):
         checkbox_checked = call_tool(
             "page.evaluate",
-            {"page_id": page_id, "expression": "document.querySelector('#agree').checked"},
+            {
+                "page_id": page_id,
+                "expression": "document.querySelector('#agree').checked",
+            },
         )["value"]
         if checkbox_checked:
             break
         time.sleep(0.1)
     assert checkbox_checked
-    assert call_tool(
-        "page.evaluate",
-        {"page_id": page_id, "expression": "window.checkboxTrusted"},
-    )["value"] is True
-    assert not call_tool(
-        "page.uncheck", {"page_id": page_id, "selector": "#agree"}
-    )["checked"]
+    assert (
+        call_tool(
+            "page.evaluate",
+            {"page_id": page_id, "expression": "window.checkboxTrusted"},
+        )["value"]
+        is True
+    )
+    assert not call_tool("page.uncheck", {"page_id": page_id, "selector": "#agree"})[
+        "checked"
+    ]
     checkbox_checked = True
     for _ in range(20):
         checkbox_checked = call_tool(
             "page.evaluate",
-            {"page_id": page_id, "expression": "document.querySelector('#agree').checked"},
+            {
+                "page_id": page_id,
+                "expression": "document.querySelector('#agree').checked",
+            },
         )["value"]
         if not checkbox_checked:
             break
         time.sleep(0.1)
     assert not checkbox_checked
-    assert call_tool(
-        "page.focus_element", {"page_id": page_id, "selector": "#typed"}
-    )["focused"]
-    assert call_tool(
-        "page.type_text", {"page_id": page_id, "text": "native input"}
-    )["characters_sent"] == len("native input")
+    assert call_tool("page.focus_element", {"page_id": page_id, "selector": "#typed"})[
+        "focused"
+    ]
+    assert call_tool("page.type_text", {"page_id": page_id, "text": "native input"})[
+        "characters_sent"
+    ] == len("native input")
     typed_value = None
     for _ in range(20):
         typed_value = call_tool(
@@ -561,20 +599,41 @@ def run_page_interaction_scenarios(state):
         },
     )
     assert fill_result["filled"] and fill_result["value"] == "filled directly"
-    assert call_tool(
-        "page.select_option",
-        {"page_id": page_id, "selector": "#choice", "value": "two"},
-    )["value"] == "two"
-    assert call_tool(
-        "page.evaluate",
-        {"page_id": page_id, "expression": "window.selected"},
-    )["value"] == "two"
-    assert call_tool(
-        "page.focus_element", {"page_id": page_id, "selector": "#typed"}
-    )["focused"]
-    assert call_tool("page.press", {"page_id": page_id, "key": "Enter"})[
-        "pressed"
+    for unsupported_selector in ("#readonly", "#upload"):
+        status, failed_fill = post(
+            "tools/call",
+            request(
+                "tools/call",
+                {
+                    "name": "page.fill",
+                    "arguments": {
+                        "page_id": page_id,
+                        "selector": unsupported_selector,
+                        "value": "must fail",
+                    },
+                    **meta,
+                },
+            ),
+        )
+        assert status == 200 and failed_fill["result"].get("isError"), failed_fill
+    assert (
+        call_tool(
+            "page.select_option",
+            {"page_id": page_id, "selector": "#choice", "value": "two"},
+        )["value"]
+        == "two"
+    )
+    assert (
+        call_tool(
+            "page.evaluate",
+            {"page_id": page_id, "expression": "window.selected"},
+        )["value"]
+        == "two"
+    )
+    assert call_tool("page.focus_element", {"page_id": page_id, "selector": "#typed"})[
+        "focused"
     ]
+    assert call_tool("page.press", {"page_id": page_id, "key": "Enter"})["pressed"]
     last_key = None
     for _ in range(20):
         last_key = call_tool(
@@ -609,6 +668,7 @@ def run_final_scenarios(state):
     target_url = state.target_url
     button_bounds = state.button_bounds
     audit_path = state.audit_path
+
     def wait_for_url(prefix):
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
@@ -659,17 +719,32 @@ def run_final_scenarios(state):
     )
     _, stale_response = post("tools/call", stale_page)
     assert stale_response["result"].get("isError")
-    assert post("server/discover", request("server/discover", meta), authenticate=False)[0] == 401
-    assert post(
-        "server/discover", request("server/discover", meta), origin="http://example.test"
-    )[0] == 403
-    assert post(
-        "server/discover", request("server/discover", meta), header_method="tools/list"
-    )[0] == 400
+    assert (
+        post("server/discover", request("server/discover", meta), authenticate=False)[0]
+        == 401
+    )
+    assert (
+        post(
+            "server/discover",
+            request("server/discover", meta),
+            origin="http://example.test",
+        )[0]
+        == 403
+    )
+    assert (
+        post(
+            "server/discover",
+            request("server/discover", meta),
+            header_method="tools/list",
+        )[0]
+        == 400
+    )
     deadline = time.monotonic() + 5
     while not audit_path.exists() and time.monotonic() < deadline:
         time.sleep(0.05)
     audit_events = [json.loads(line) for line in audit_path.read_text().splitlines()]
     assert any(event.get("tool") == "page.goto" for event in audit_events)
-    assert all("arguments" not in event and "token" not in event for event in audit_events)
+    assert all(
+        "arguments" not in event and "token" not in event for event in audit_events
+    )
     print("Embedded MCP endpoint integration checks passed.")

@@ -82,6 +82,8 @@ def run_context_scenarios(state):
     )
     private_context = call_tool("browser.create_context", {})["context_id"]
     assert private_context != contexts[0]["context_id"]
+    second_private_context = call_tool("browser.create_context", {})["context_id"]
+    assert second_private_context != private_context
     assert call_tool(
         "context.set_permission",
         {
@@ -119,8 +121,38 @@ def run_context_scenarios(state):
         cookie["name"] == "private_mcp_cookie"
         for cookie in private_storage["cookies"]
     )
+    for context_id, cookie_value in (
+        (private_context, "isolated-one"),
+        (second_private_context, "isolated-two"),
+    ):
+        assert call_tool(
+            "context.set_cookies",
+            {
+                "context_id": context_id,
+                "cookies": [{
+                    "url": cookie_url,
+                    "name": "same_cookie_name",
+                    "value": cookie_value,
+                }],
+            },
+        )["set_count"] == 1
+    for context_id, expected_cookie in (
+        (private_context, "isolated-one"),
+        (second_private_context, "isolated-two"),
+    ):
+        cookies = call_tool("context.storage_state", {"context_id": context_id})["cookies"]
+        assert any(
+            item["name"] == "same_cookie_name" and item["value"] == expected_cookie
+            for item in cookies
+        ), cookies
     assert call_tool(
         "browser.close_context", {"context_id": private_context}
+    )["closed"]
+    assert call_tool(
+        "context.storage_state", {"context_id": second_private_context}
+    )["cookies"]
+    assert call_tool(
+        "browser.close_context", {"context_id": second_private_context}
     )["closed"]
     closed_context = request(
         "tools/call",
@@ -139,6 +171,38 @@ def run_context_scenarios(state):
         "page.new", {"context_id": window_context}
     )
     assert private_page["context_id"] == window_context
+    private_url = f"http://127.0.0.1:{fixture_server.server_port}/slow"
+    call_tool(
+        "page.goto", {"page_id": private_page["page_id"], "url": private_url}
+    )
+    call_tool("page.wait_for_load_state", {"page_id": private_page["page_id"]})
+    call_tool(
+        "page.evaluate",
+        {
+            "page_id": private_page["page_id"],
+            "expression": "fetch('/next')",
+        },
+    )
+    private_events = []
+    for _ in range(30):
+        private_events.extend(
+            call_tool(
+                "page.network_events", {"page_id": private_page["page_id"]}
+            )["events"]
+        )
+        if any(
+            event["event_type"] == "subresource_request"
+            and event["url"].endswith("/next")
+            for event in private_events
+        ):
+            break
+        time.sleep(0.1)
+    assert any(
+        event["event_type"] == "subresource_request"
+        and event["page_id"] == private_page["page_id"]
+        and event["url"].endswith("/next")
+        for event in private_events
+    ), private_events
     assert call_tool(
         "browser.close_context", {"context_id": window_context}
     )["closed"]
@@ -180,10 +244,27 @@ def run_page_setup_scenarios(state):
         event_target.hostname, event_target.port, timeout=10
     )
     event_connection.request(
-        "GET",
+        "POST",
         event_target.path,
+        body=json.dumps({
+            "jsonrpc": "2.0",
+            "id": "browser-events-1",
+            "method": "subscriptions/listen",
+            "params": {
+                "notifications": {
+                    "resourceSubscriptions": [
+                        "chromium-mcp://browser/events",
+                        "chromium-mcp://browser/unavailable",
+                    ]
+                },
+                **state.meta,
+            },
+        }),
         headers={
-            "Accept": "text/event-stream",
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json",
+            "MCP-Protocol-Version": state.protocol_version,
+            "Mcp-Method": "subscriptions/listen",
             "Authorization": f"Bearer {token}",
             "Host": event_target.netloc,
         },
@@ -199,14 +280,87 @@ def run_page_setup_scenarios(state):
             if line.startswith(b"data: "):
                 return json.loads(line[len(b"data: ") :])
 
-    opened_event = next_event()
-    assert opened_event["method"] == "notifications/message"
-    assert opened_event["params"]["data"]["event_type"] == "event_stream_opened"
+    acknowledged = next_event()
+    assert acknowledged["method"] == "notifications/subscriptions/acknowledged"
+    assert acknowledged["_meta"]["io.modelcontextprotocol/subscriptionId"] == "browser-events-1", acknowledged
+    assert acknowledged["params"]["notifications"]["resourceSubscriptions"] == [
+        "chromium-mcp://browser/events"
+    ]
+    second_connection = HTTPConnection(
+        event_target.hostname, event_target.port, timeout=10
+    )
+    second_connection.request(
+        "POST",
+        event_target.path,
+        body=json.dumps({
+            "jsonrpc": "2.0",
+            "id": "browser-events-2",
+            "method": "subscriptions/listen",
+            "params": {
+                "notifications": {
+                    "resourceSubscriptions": ["chromium-mcp://browser/events"]
+                },
+                **state.meta,
+            },
+        }),
+        headers={
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json",
+            "MCP-Protocol-Version": state.protocol_version,
+            "Mcp-Method": "subscriptions/listen",
+            "Authorization": f"Bearer {token}",
+            "Host": event_target.netloc,
+        },
+    )
+    second_response = second_connection.getresponse()
+    assert second_response.status == 200
+
+    def second_event():
+        while True:
+            line = second_response.readline()
+            assert line, "Second MCP event stream closed unexpectedly"
+            if line.startswith(b"data: "):
+                return json.loads(line[len(b"data: ") :])
+
+    second_acknowledged = second_event()
+    assert second_acknowledged["method"] == "notifications/subscriptions/acknowledged"
+    assert second_acknowledged["_meta"]["io.modelcontextprotocol/subscriptionId"] == "browser-events-2"
+    event_cursor = 0
+
+    def next_browser_event(event_type, page_id=None):
+        nonlocal event_cursor
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            _, resource = state.post(
+                "resources/read",
+                state.request("resources/read", {
+                    "uri": f"chromium-mcp://browser/events?after={event_cursor}",
+                    **state.meta,
+                }),
+            )
+            journal = json.loads(resource["result"]["contents"][0]["text"])
+            event_cursor = int(journal["next_cursor"])
+            for entry in journal["events"]:
+                event = entry["event"]
+                entry_cursor = int(entry["cursor"])
+                if event.get("event_type") == event_type and (
+                    page_id is None or event.get("page_id") == page_id
+                ):
+                    event_cursor = entry_cursor
+                    return event
+                event_cursor = max(event_cursor, entry_cursor)
+            event_cursor = max(event_cursor, int(journal["next_cursor"]))
+            update = next_event()
+            assert update["method"] == "notifications/resources/updated"
+            assert update["_meta"]["io.modelcontextprotocol/subscriptionId"] == "browser-events-1"
+        raise AssertionError(f"Timed out waiting for {event_type} on {page_id}")
+
     new_page = call_tool("page.new", {})
     page_id = new_page["page_id"]
-    created_event = next_event()
-    assert created_event["params"]["data"]["event_type"] == "tab_created"
-    assert created_event["params"]["data"]["page_id"] == page_id
+    assert next_browser_event("tab_created", page_id)["page_id"] == page_id
+    second_update = second_event()
+    assert second_update["method"] == "notifications/resources/updated"
+    assert second_update["_meta"]["io.modelcontextprotocol/subscriptionId"] == "browser-events-2"
     target_url = f"http://127.0.0.1:{fixture_server.server_port}/slow"
     assert call_tool("page.goto", {"page_id": page_id, "url": target_url})
     assert call_tool(
@@ -215,17 +369,8 @@ def run_page_setup_scenarios(state):
     assert call_tool("page.wait_for_load_state", {"page_id": page_id})[
         "load_state"
     ] == "load"
-    navigation_events = set()
-    event_deadline = time.monotonic() + 10
-    while (
-        "navigation_finished" not in navigation_events
-        and time.monotonic() < event_deadline
-    ):
-        event = next_event()["params"]["data"]
-        if event["page_id"] == page_id and event["url"] == target_url:
-            navigation_events.add(event["event_type"])
-    assert "navigation_committed" in navigation_events, navigation_events
-    assert "navigation_finished" in navigation_events, navigation_events
+    assert next_browser_event("navigation_committed", page_id)["url"] == target_url
+    assert next_browser_event("navigation_finished", page_id)["url"] == target_url
     popup_bounds = json.loads(
         call_tool(
             "page.evaluate",
@@ -243,46 +388,15 @@ def run_page_setup_scenarios(state):
             "y": round(popup_bounds["y"]),
         },
     )["clicked"]
-    popup_events = {}
-    popup_deadline = time.monotonic() + 10
-    while (
-        "popup_created" not in popup_events.values()
-        and time.monotonic() < popup_deadline
-    ):
-        event = next_event()["params"]["data"]
-        popup_events[event.get("page_id")] = event["event_type"]
-    popup_page_id = next(
-        key for key, value in popup_events.items() if value == "popup_created"
-    )
-    assert popup_events[popup_page_id] == "popup_created"
+    popup_page_id = next_browser_event("popup_created")["page_id"]
     assert call_tool("page.close", {"page_id": popup_page_id})["closed"]
-    popup_closed_events = set()
-    popup_close_deadline = time.monotonic() + 10
-    while (
-        "popup_closed" not in popup_closed_events
-        and time.monotonic() < popup_close_deadline
-    ):
-        event = next_event()["params"]["data"]
-        if event.get("page_id") == popup_page_id:
-            popup_closed_events.add(event["event_type"])
-    assert "popup_closed" in popup_closed_events
+    next_browser_event("popup_closed", popup_page_id)
     closing_page_id = call_tool("page.new", {})["page_id"]
-    while True:
-        event = next_event()["params"]["data"]
-        if (
-            event["event_type"] == "tab_created"
-            and event["page_id"] == closing_page_id
-        ):
-            break
+    next_browser_event("tab_created", closing_page_id)
     assert call_tool("page.close", {"page_id": closing_page_id})["closed"]
-    while True:
-        event = next_event()["params"]["data"]
-        if (
-            event["event_type"] == "tab_closed"
-            and event["page_id"] == closing_page_id
-        ):
-            break
+    next_browser_event("tab_closed", closing_page_id)
     event_connection.close()
+    second_connection.close()
     assert any(
         value.lower().startswith("fr-ca") for value in ACCEPT_LANGUAGE_HEADERS
     ), ACCEPT_LANGUAGE_HEADERS
