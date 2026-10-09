@@ -11,6 +11,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/sequence_checker.h"
 #include "base/types/pass_key.h"
+#include "chrome/common/agent/browser_agent_network_event_host.mojom.h"
 #include "components/safe_browsing/content/common/safe_browsing.mojom.h"
 #include "extensions/buildflags/buildflags.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
@@ -43,6 +44,8 @@ class URLLoaderThrottleProviderImpl : public blink::URLLoaderThrottleProvider {
       ChromeContentRendererClient* chrome_content_renderer_client,
       mojo::PendingRemote<safe_browsing::mojom::SafeBrowsing>
           pending_safe_browsing,
+      mojo::PendingRemote<chrome::mojom::BrowserAgentNetworkEventHost>
+          pending_browser_agent_network_event_host,
 #if BUILDFLAG(ENABLE_EXTENSIONS)
       mojo::PendingRemote<safe_browsing::mojom::ExtensionWebRequestReporter>
           pending_extension_web_request_reporter,
@@ -65,6 +68,8 @@ class URLLoaderThrottleProviderImpl : public blink::URLLoaderThrottleProvider {
  private:
   mojo::PendingRemote<safe_browsing::mojom::SafeBrowsing>
   CloneSafeBrowsingPendingRemote();
+  mojo::PendingRemote<chrome::mojom::BrowserAgentNetworkEventHost>
+  CloneBrowserAgentNetworkEventHostPendingRemote();
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   mojo::PendingRemote<safe_browsing::mojom::ExtensionWebRequestReporter>
   CloneExtensionWebRequestReporterPendingRemote();
@@ -76,6 +81,10 @@ class URLLoaderThrottleProviderImpl : public blink::URLLoaderThrottleProvider {
   mojo::PendingRemote<safe_browsing::mojom::SafeBrowsing>
       pending_safe_browsing_;
   mojo::Remote<safe_browsing::mojom::SafeBrowsing> safe_browsing_;
+  mojo::PendingRemote<chrome::mojom::BrowserAgentNetworkEventHost>
+      pending_browser_agent_network_event_host_;
+  mojo::Remote<chrome::mojom::BrowserAgentNetworkEventHost>
+      browser_agent_network_event_host_;
 
 // TODO(crbug.com/513231260): Convert to ENABLE_EXTENSIONS_CORE when safe
 // browsing supports extensions on desktop Android.

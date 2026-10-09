@@ -59,7 +59,7 @@
 #include "chrome/browser/accessibility/caption_settings_dialog.h"
 #include "chrome/browser/actor/actor_commit_deferring_condition.h"
 #include "chrome/browser/after_startup_task_utils.h"
-#include "chrome/browser/agent/browser_agent_network_throttle.h"
+#include "chrome/common/agent/browser_agent_network_throttle.h"
 #include "chrome/browser/agent/browser_agent_service_factory.h"
 #include "chrome/browser/ai/ai_manager.h"
 #include "chrome/browser/app_mode/app_mode_utils.h"

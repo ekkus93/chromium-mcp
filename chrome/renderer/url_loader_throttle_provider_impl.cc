@@ -12,7 +12,9 @@
 #include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/task/sequenced_task_runner.h"
+#include "base/values.h"
 #include "build/build_config.h"
+#include "chrome/common/agent/browser_agent_network_throttle.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/google_url_loader_throttle.h"
 #include "chrome/common/request_header_integrity/buildflags.h"
@@ -110,6 +112,11 @@ URLLoaderThrottleProviderImpl::Create(
     blink::ThreadSafeBrowserInterfaceBrokerProxy* broker) {
   mojo::PendingRemote<safe_browsing::mojom::SafeBrowsing> pending_safe_browsing;
   broker->GetInterface(pending_safe_browsing.InitWithNewPipeAndPassReceiver());
+  mojo::PendingRemote<chrome::mojom::BrowserAgentNetworkEventHost>
+      pending_browser_agent_network_event_host;
+  broker->GetInterface(
+      pending_browser_agent_network_event_host
+          .InitWithNewPipeAndPassReceiver());
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   mojo::PendingRemote<safe_browsing::mojom::ExtensionWebRequestReporter>
       pending_extension_web_request_reporter;
@@ -119,6 +126,7 @@ URLLoaderThrottleProviderImpl::Create(
 
   return std::make_unique<URLLoaderThrottleProviderImpl>(
       type, chrome_content_renderer_client, std::move(pending_safe_browsing),
+      std::move(pending_browser_agent_network_event_host),
 #if BUILDFLAG(ENABLE_EXTENSIONS)
       std::move(pending_extension_web_request_reporter),
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
@@ -134,6 +142,8 @@ URLLoaderThrottleProviderImpl::URLLoaderThrottleProviderImpl(
     ChromeContentRendererClient* chrome_content_renderer_client,
     mojo::PendingRemote<safe_browsing::mojom::SafeBrowsing>
         pending_safe_browsing,
+    mojo::PendingRemote<chrome::mojom::BrowserAgentNetworkEventHost>
+        pending_browser_agent_network_event_host,
 #if BUILDFLAG(ENABLE_EXTENSIONS)
     mojo::PendingRemote<safe_browsing::mojom::ExtensionWebRequestReporter>
         pending_extension_web_request_reporter,
@@ -143,6 +153,8 @@ URLLoaderThrottleProviderImpl::URLLoaderThrottleProviderImpl(
     : type_(type),
       chrome_content_renderer_client_(chrome_content_renderer_client),
       pending_safe_browsing_(std::move(pending_safe_browsing)),
+      pending_browser_agent_network_event_host_(
+          std::move(pending_browser_agent_network_event_host)),
 #if BUILDFLAG(ENABLE_EXTENSIONS)
       pending_extension_web_request_reporter_(
           std::move(pending_extension_web_request_reporter)),
@@ -160,6 +172,7 @@ URLLoaderThrottleProviderImpl::Clone() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return std::make_unique<URLLoaderThrottleProviderImpl>(
       type_, chrome_content_renderer_client_, CloneSafeBrowsingPendingRemote(),
+      CloneBrowserAgentNetworkEventHostPendingRemote(),
 #if BUILDFLAG(ENABLE_EXTENSIONS)
       CloneExtensionWebRequestReporterPendingRemote(),
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
@@ -191,6 +204,36 @@ URLLoaderThrottleProviderImpl::CreateThrottles(
 
   DCHECK(!is_frame_resource ||
          type_ == blink::URLLoaderThrottleProviderType::kFrame);
+
+  if (type_ == blink::URLLoaderThrottleProviderType::kFrame &&
+      !is_frame_resource && local_frame_token.has_value()) {
+    if (pending_browser_agent_network_event_host_) {
+      browser_agent_network_event_host_.Bind(
+          std::move(pending_browser_agent_network_event_host_));
+    }
+    if (browser_agent_network_event_host_) {
+      mojo::PendingRemote<chrome::mojom::BrowserAgentNetworkEventHost>
+          pending_event_host;
+      browser_agent_network_event_host_->Clone(
+          pending_event_host.InitWithNewPipeAndPassReceiver());
+      auto* event_host = new mojo::Remote<
+          chrome::mojom::BrowserAgentNetworkEventHost>(
+          std::move(pending_event_host));
+      auto event_callback = base::BindRepeating(
+          [](mojo::Remote<chrome::mojom::BrowserAgentNetworkEventHost>* host,
+             blink::LocalFrameToken frame_token,
+             base::DictValue event) {
+            if (*host) {
+              (*host)->ReportNetworkEvent(frame_token.value(),
+                                          std::move(event));
+            }
+          },
+          base::Owned(event_host), local_frame_token.value());
+      throttles.emplace_back(
+          std::make_unique<browser_agent::BrowserAgentNetworkThrottle>(
+              std::move(event_callback)));
+    }
+  }
 
 #if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
   if (!is_frame_resource) {
@@ -328,6 +371,23 @@ URLLoaderThrottleProviderImpl::CloneSafeBrowsingPendingRemote() {
         new_pending_safe_browsing.InitWithNewPipeAndPassReceiver());
   }
   return new_pending_safe_browsing;
+}
+
+mojo::PendingRemote<chrome::mojom::BrowserAgentNetworkEventHost>
+URLLoaderThrottleProviderImpl::
+    CloneBrowserAgentNetworkEventHostPendingRemote() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  mojo::PendingRemote<chrome::mojom::BrowserAgentNetworkEventHost>
+      new_pending_event_host;
+  if (pending_browser_agent_network_event_host_) {
+    browser_agent_network_event_host_.Bind(
+        std::move(pending_browser_agent_network_event_host_));
+  }
+  if (browser_agent_network_event_host_) {
+    browser_agent_network_event_host_->Clone(
+        new_pending_event_host.InitWithNewPipeAndPassReceiver());
+  }
+  return new_pending_event_host;
 }
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)

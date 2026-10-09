@@ -18,6 +18,10 @@ Chromium requires `depot_tools` and a configured output directory; see `docs/get
 
 Follow nearby code and the language-specific rules in `docs/`. C++ formatting follows `.clang-format`; use Chromium naming patterns (types and methods in `UpperCamelCase`, variables in `lower_snake_case`). Python uses the repository’s Python tooling; JavaScript and TypeScript conventions are directory-specific. Keep changes focused and update `BUILD.gn` and tests when adding sources or behavior.
 
+## Code Navigation
+
+When Serena MCP is available and this project is active, prefer its symbol tools (such as file overviews, symbol search, and reference lookup) to explore source code and understand relationships. This keeps code reads focused and reduces unnecessary context. Use `rg` for locating files, searching literal text or non-code files, and when Serena is unavailable or cannot answer the question. Read Serena’s initial instructions before its first use in a task, and activate this project if needed.
+
 ## Testing Guidelines
 
 Add or update tests with the code they cover. Chromium uses GoogleTest for most C++ unit and browser tests, plus Web Tests and platform-specific suites. Build and run the narrowest relevant target first. Follow `docs/testing/testing_in_chromium.md` and the affected area’s instructions; there is no single repository-wide test command or coverage threshold.

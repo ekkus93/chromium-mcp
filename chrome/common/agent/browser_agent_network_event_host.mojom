@@ -1,0 +1,16 @@
+// Copyright 2026 The Chromium Authors
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+module chrome.mojom;
+
+import "mojo/public/mojom/base/values.mojom";
+import "mojo/public/mojom/base/unguessable_token.mojom";
+
+// Reports renderer-initiated resource events to the browser agent for the
+// frame that owns this interface.
+interface BrowserAgentNetworkEventHost {
+  ReportNetworkEvent(mojo_base.mojom.UnguessableToken frame_token,
+                     mojo_base.mojom.DictionaryValue event);
+  Clone(pending_receiver<BrowserAgentNetworkEventHost> receiver);
+};

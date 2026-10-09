@@ -924,13 +924,17 @@ def main():
                 break
             time.sleep(0.1)
         assert any(
-            item["final_url"].endswith("/next") and item["http_status"] == 200
+            item["event_type"] == "resource_complete"
+            and item["final_url"].endswith("/next")
+            and item["http_status"] == 200
             for item in network_events
         )
         completed_fetch = next(
             item
             for item in network_events
-            if item["final_url"].endswith("/next") and item["http_status"] == 200
+            if item["event_type"] == "resource_complete"
+            and item["final_url"].endswith("/next")
+            and item["http_status"] == 200
         )
         assert completed_fetch["request_id"] > 0
         assert completed_fetch["request_destination"] >= 0
@@ -991,17 +995,37 @@ def main():
             "page.evaluate",
             {"page_id": page_id, "expression": "document.title"},
         )["value"] == "Slow fixture"
-        frames = call_tool("page.frames", {"page_id": page_id})["frames"]
+        frames = []
+        child_frame = None
+        for _ in range(20):
+            frames = call_tool("page.frames", {"page_id": page_id})["frames"]
+            child_frame = next(
+                (
+                    frame
+                    for frame in frames
+                    if not frame["main_frame"]
+                    and frame["url"].endswith("/cross")
+                    and frame["live"]
+                ),
+                None,
+            )
+            if child_frame:
+                break
+            time.sleep(0.1)
         assert any(frame["main_frame"] for frame in frames)
-        child_frame = next(frame for frame in frames if not frame["main_frame"])
-        assert call_tool(
+        assert child_frame is not None
+        child_evaluation = call_tool(
             "page.evaluate",
             {
                 "page_id": page_id,
                 "frame_id": child_frame["frame_id"],
                 "expression": "document.body.textContent",
             },
-        )["value"] == "child frame"
+        )
+        assert child_evaluation.get("value") == "child frame", (
+            child_frame,
+            child_evaluation,
+        )
         cross_frame_storage = call_tool(
             "page.set_storage",
             {

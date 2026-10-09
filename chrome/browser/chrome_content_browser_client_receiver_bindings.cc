@@ -10,6 +10,7 @@
 #include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/agent/browser_agent_network_event_host.h"
 #include "chrome/browser/chrome_browser_interface_binders.h"
 #include "chrome/browser/chrome_browser_interface_binders_webui.h"
 #include "chrome/browser/chrome_content_browser_client.h"
@@ -231,6 +232,10 @@ void ChromeContentBrowserClient::ExposeInterfacesToRenderer(
       content::GetUIThreadTaskRunner({});
   registry->AddInterface<metrics::mojom::CallStackProfileCollector>(
       base::BindRepeating(&metrics::CallStackProfileCollector::Create));
+  registry->AddInterface<chrome::mojom::BrowserAgentNetworkEventHost>(
+      base::BindRepeating(&browser_agent::BindBrowserAgentNetworkEventHost,
+                          render_process_host->GetDeprecatedID()),
+      ui_task_runner);
 
   if (NetBenchmarking::CheckBenchmarkingEnabled()) {
     Profile* profile =

@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/agent/browser_agent_network_throttle.h"
+#include "chrome/common/agent/browser_agent_network_throttle.h"
 
 #include <memory>
 #include <optional>
@@ -12,6 +12,7 @@
 #include "base/base64.h"
 #include "base/containers/span.h"
 #include "base/functional/bind.h"
+#include "base/location.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string_view_util.h"
 #include "base/task/sequenced_task_runner.h"
@@ -341,8 +342,19 @@ void BrowserAgentNetworkThrottle::WillProcessResponse(
 
   *defer = true;
   capture_response_ = false;
-  network::mojom::URLResponseHeadPtr response_head_copy =
-      response_head->Clone();
+  auto response_head_copy = response_head->Clone();
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE,
+      base::BindOnce(&BrowserAgentNetworkThrottle::OnResponseDeferred,
+                     weak_factory_.GetWeakPtr(),
+                     std::move(response_head_copy)));
+}
+
+void BrowserAgentNetworkThrottle::OnResponseDeferred(
+    network::mojom::URLResponseHeadPtr response_head_copy) {
+  if (!delegate_) {
+    return;
+  }
 
   mojo::PendingRemote<network::mojom::URLLoader> replacement_loader;
   mojo::PendingReceiver<network::mojom::URLLoader> replacement_loader_receiver =

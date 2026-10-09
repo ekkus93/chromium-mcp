@@ -2,14 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef CHROME_BROWSER_AGENT_BROWSER_AGENT_NETWORK_THROTTLE_H_
-#define CHROME_BROWSER_AGENT_BROWSER_AGENT_NETWORK_THROTTLE_H_
+#ifndef CHROME_COMMON_AGENT_BROWSER_AGENT_NETWORK_THROTTLE_H_
+#define CHROME_COMMON_AGENT_BROWSER_AGENT_NETWORK_THROTTLE_H_
 
 #include <memory>
 #include <string>
 
 #include "base/functional/callback.h"
+#include "base/memory/weak_ptr.h"
 #include "base/values.h"
+#include "services/network/public/mojom/url_response_head.mojom.h"
 #include "third_party/blink/public/common/loader/url_loader_throttle.h"
 
 namespace network {
@@ -41,13 +43,17 @@ class BrowserAgentNetworkThrottle final : public blink::URLLoaderThrottle {
                            bool* defer) override;
 
  private:
+  void OnResponseDeferred(
+      network::mojom::URLResponseHeadPtr response_head_copy);
+
   const EventCallback event_callback_;
   std::string request_url_;
   std::string request_id_;
   bool capture_response_ = false;
   std::unique_ptr<BrowserAgentNetworkResponseForwarder> response_forwarder_;
+  base::WeakPtrFactory<BrowserAgentNetworkThrottle> weak_factory_{this};
 };
 
 }  // namespace browser_agent
 
-#endif  // CHROME_BROWSER_AGENT_BROWSER_AGENT_NETWORK_THROTTLE_H_
+#endif  // CHROME_COMMON_AGENT_BROWSER_AGENT_NETWORK_THROTTLE_H_

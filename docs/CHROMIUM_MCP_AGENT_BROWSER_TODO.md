@@ -51,7 +51,7 @@ Companion spec: `docs/CHROMIUM_MCP_AGENT_BROWSER_SPEC.md`
 - [x] Implement context create/list/close and native cookie read/write tools.
 - [x] Implement page registry mappings backed by native tab handles and opaque page handles.
 - [x] Enumerate native tab strips so page listing discovers tabs and popups; reject closed TabHandles.
-- [ ] Validate push notifications for tab creation, closure, popups, and navigation lifecycle in the browser integration suite.
+- [x] Validate push notifications for tab creation, closure, popups, and navigation lifecycle in the browser integration suite.
 - [x] Implement page list/new/close/focus/info tools.
 - [x] Add context/page creation, closure, and stale-handle integration tests.
 
@@ -99,7 +99,7 @@ Companion spec: `docs/CHROMIUM_MCP_AGENT_BROWSER_SPEC.md`
 - [x] Import and export local/session storage for the current document or a selected cross-origin frame using native frame execution.
 - [x] Inspect context cookies, current-page local/session storage, and native local-storage origins/partition keys/sizes.
 - [x] Observe navigation request/response lifecycle and completed resource loads; clear the native HTTP cache.
-- [ ] Validate subresource request/response header and body capture in the browser suite; native interception, stream teeing, and integration assertions are implemented.
+- [x] Validate subresource request/response header and body capture in the browser suite; native interception, stream teeing, and integration assertions are implemented.
 - [x] Capture main-frame navigation request and response headers through `NavigationHandle`.
 - [x] Expand native resource events with request identity, destination, referrer, network access, and received-byte metadata.
 - [x] Add native context controls for Accept-Language, referrer headers, and idle connections.
@@ -118,8 +118,22 @@ Companion spec: `docs/CHROMIUM_MCP_AGENT_BROWSER_SPEC.md`
 
 ## MVP completion criteria
 
-- [ ] Rebuild Chromium with the latest event-stream and subresource capture hooks.
+- [x] Rebuild Chromium with the latest event-stream and subresource capture hooks.
 - [x] An MCP client directly controls tabs through Chromium-native APIs.
 - [x] Navigation, observation, evaluation, input, dialogs, downloads, and permissions work in browser integration tests.
 - [x] No CDP, Playwright, sidecar, agent allowlist, redaction layer, or approval gate is required for current control tools.
 - [ ] Rerun MCP and browser integration tests for the latest implementation, and confirm the documentation matches.
+
+## Latest validation attempt (2026-10-09)
+
+- `autoninja -j1 -C out/Default chrome` completed successfully; Ninja reported
+  no work was pending.
+- `npm test --prefix agent_protocol` passed (2 tests), and the Python
+  integration script passed syntax compilation.
+- `out/Default/unit_tests --gtest_filter='BrowserAgent*'` passed (8 tests).
+- The browser integration run verified subresource request headers, response
+  headers, and response body bytes, then failed during cross-origin iframe
+  JavaScript evaluation: `page.evaluate` returned `null` for
+  `document.body.textContent` in a live committed child frame.
+- Real OS/device permission denial evidence is still unavailable from this
+  headless Ubuntu session without controllable desktop permission settings.

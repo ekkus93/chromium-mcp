@@ -140,6 +140,8 @@ static_library("common_lib") {
     "actor/action_result.cc",
     "actor/action_result.h",
     "actor/actor_constants.h",
+    "agent/browser_agent_network_throttle.cc",
+    "agent/browser_agent_network_throttle.h",
     "chrome_content_client.cc",
     "chrome_content_client.h",
     "chrome_content_client_constants.cc",
@@ -281,6 +283,11 @@ static_library("common_lib") {
     "//components/page_load_metrics/common",
     "//components/pdf/common:constants",
     "//components/pdf/common:util",
+    "//mojo/public/cpp/base",
+    "//mojo/public/cpp/system",
+    "//services/network/public/cpp",
+    "//services/network/public/mojom",
+    "//third_party/blink/public/common",
   ]
 
   if (is_mac || is_win || is_linux || is_chromeos) {
@@ -688,6 +695,7 @@ if (is_mac) {
 
 mojom("mojo_bindings") {
   sources = [
+    "agent/browser_agent_network_event_host.mojom",
     "actor.mojom",
     "chrome_render_frame.mojom",
     "google_accounts_private_api_extension.mojom",

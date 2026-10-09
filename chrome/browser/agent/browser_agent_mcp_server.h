@@ -53,6 +53,8 @@ class BrowserAgentMcpServer : public net::HttpServer::Delegate,
   void OnProfileWillBeDestroyed(Profile* profile) override;
 
  private:
+  friend class BrowserAgentService;
+
   void OnConnect(int connection_id) override;
   void OnHttpRequest(int connection_id,
                      const net::HttpServerRequestInfo& info) override;
