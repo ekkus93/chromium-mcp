@@ -9,10 +9,10 @@ endpoint and browser control tools use Chromium-native APIs. The event-stream
 and subresource network capture work is now in the source tree and has been
 validated against the local browser fixture. No CDP or sidecar is used.
 
-The working branch is `master`, based on `8f4fe4e54b` before this handoff
-commit. The 2026-10-09 source and documentation changes, including this file,
-are intended to be committed and pushed together. Local output files under
-`out/Default/` are not part of the commit.
+The working branch is `master` at `abba3e88b9`. The local Chrome binary was
+stale after the source update; rebuilding `out/Default/chrome` resolved the
+event-stream and cross-origin iframe integration failures without source code
+changes. Local output files under `out/Default/` are not part of the commit.
 
 ## Recent implementation
 
@@ -26,48 +26,43 @@ are intended to be committed and pushed together. Local output files under
 - Updated the event assertions to distinguish `resource_complete` records from
   the newer request and response events.
 - Updated `AGENTS.md` with the repository's Serena code navigation guidance.
+- Added Linux integration for GNOME's system location, camera, and microphone
+  privacy settings through GSettings.
 - Updated the canonical TODO with the validation results below.
 
 ## Validation
 
-Run on 2026-10-09 in this checkout:
+Run on 2026-10-09 in this checkout after rebuilding the local browser:
 
-- `autoninja -j1 -C out/Default chrome` completed successfully; Ninja reported
-  no pending work.
+- `taskset -c 0 env PATH="/home/phil/depot_tools:$PATH" autoninja -j1 -C
+  out/Default chrome` completed successfully.
 - `npm test --prefix agent_protocol` passed: 2 tests.
 - `taskset -c 0 out/Default/unit_tests --gtest_filter='BrowserAgent*'` passed:
   8 tests.
-- Python syntax compilation for
-  `agent_protocol/tests/chromium_mcp_integration.py` passed.
+- `taskset -c 0 env CHROME_BIN=../out/Default/chrome npm run test:chromium
+  --prefix agent_protocol` passed twice, including event streaming, subresource
+  request/response headers and response body bytes, and cross-origin iframe
+  evaluation.
+- The opt-in OS-denial browser integration run passed for geolocation with
+  GNOME Location disabled, camera with `disable-camera=true`, and microphone
+  with `disable-microphone=true`. Each reported
+  `browser_status=granted`, `combined_status=denied`, and
+  `os_or_device_denied=true` on Linux GNOME. Camera and microphone settings were
+  restored to their original `false` values afterward.
 - `git diff --check` passed.
-- The MCP browser integration suite reached and passed subresource request and
-  response header checks and decoded the captured response body successfully.
-  The overall run then failed at cross-origin iframe evaluation: `page.evaluate`
-  returned `null` for `document.body.textContent` in a live, committed child
-  frame at `http://localhost:<fixture-port>/cross`. This remains to diagnose;
-  the complete browser integration suite has not passed.
 
-The headless Ubuntu session has no controllable desktop permission settings.
-Real OS/device permission denial remains unverified. On the development
-computer with a supported desktop, change an OS-level camera, microphone, or
-location permission to denied while leaving the browser content setting
-granted, then run the MCP browser integration permission check and record the
-OS/version, permission changed, and observed `browser_status`,
-`combined_status`, and `os_or_device_denied` values. The relevant existing test
-is in `agent_protocol/tests/chromium_mcp_integration.py` around the
-`page.permission_status` assertions.
+The earlier event-stream 403 and iframe evaluation returning `null` came from
+running the pre-pull local Chrome binary. The suite passed after rebuilding the
+current source, with no source behavior change.
+
+The opt-in permission check is controlled by
+`CHROMIUM_MCP_EXPECT_OS_PERMISSION_DENIAL` and prints platform and status
+evidence. See the TODO and test plan for Linux GNOME settings and other
+platform-specific setup.
 
 ## Remaining work
 
-1. Diagnose and fix the cross-origin child-frame `page.evaluate` returning
-   `null`; rerun the complete MCP browser integration suite.
-2. On a desktop OS with controllable permission settings, verify a real
-   OS/device-level denial while the browser-level permission is granted, then
-   record platform and evidence in the TODO.
-3. Rerun `npm test --prefix agent_protocol`, the focused Chromium unit tests,
-   and `autoninja -j1 -C out/Default chrome` after any fixes. Update the TODO
-   only to reflect the final results.
-4. Review the full local diff before further commits. Keep generated build
+1. Review the full local diff before further commits. Keep generated build
    output and `.serena/` local state out of Git.
 
 ## Useful commands
@@ -75,7 +70,7 @@ is in `agent_protocol/tests/chromium_mcp_integration.py` around the
 From the repository root, use the checkout's `depot_tools` on `PATH`:
 
 ```sh
-taskset -c 0 env PATH="$PWD/third_party/depot_tools:$PATH" \
+taskset -c 0 env PATH="/home/phil/depot_tools:$PATH" \
   autoninja -j1 -C out/Default chrome
 taskset -c 0 out/Default/unit_tests --gtest_filter='BrowserAgent*'
 npm test --prefix agent_protocol

@@ -6,6 +6,7 @@ from http.client import HTTPConnection
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
+import platform
 from pathlib import Path
 import shutil
 import subprocess
@@ -675,13 +676,49 @@ def main():
         call_tool("page.set_user_agent", {"page_id": page_id, "user_agent": ""})
         call_tool("page.reload", {"page_id": page_id})
         call_tool("page.wait_for_load_state", {"page_id": page_id})
+        expected_os_permission_denial = os.environ.get(
+            "CHROMIUM_MCP_EXPECT_OS_PERMISSION_DENIAL"
+        )
+        supported_device_permissions = {"camera", "geolocation", "microphone"}
+        if expected_os_permission_denial and (
+            expected_os_permission_denial not in supported_device_permissions
+        ):
+            raise AssertionError(
+                "CHROMIUM_MCP_EXPECT_OS_PERMISSION_DENIAL must be camera, "
+                "geolocation, or microphone"
+            )
+        permission_to_check = expected_os_permission_denial or "geolocation"
+        if expected_os_permission_denial:
+            browser_permission = call_tool(
+                "context.set_permission",
+                {
+                    "url": target_url,
+                    "permission": permission_to_check,
+                    "setting": "allow",
+                },
+            )
+            assert browser_permission["setting"] == "allow"
         permission_status = call_tool(
             "page.permission_status",
-            {"page_id": page_id, "permission": "geolocation"},
+            {"page_id": page_id, "permission": permission_to_check},
         )
         assert permission_status["browser_status"] in {"granted", "denied", "ask"}
         assert permission_status["combined_status"] in {"granted", "denied", "ask"}
         assert permission_status["has_device_status"] is True
+        if expected_os_permission_denial:
+            evidence = {
+                "platform": platform.platform(),
+                "permission": permission_to_check,
+                **permission_status,
+            }
+            print(
+                "OS_PERMISSION_DENIAL_EVIDENCE="
+                + json.dumps(evidence, sort_keys=True),
+                flush=True,
+            )
+            assert permission_status["browser_status"] == "granted", evidence
+            assert permission_status["combined_status"] == "denied", evidence
+            assert permission_status["os_or_device_denied"] is True, evidence
         if (
             permission_status["browser_status"] != "denied"
             and permission_status["combined_status"] == "denied"

@@ -159,6 +159,9 @@ class ChromeComposeClientTest : public ChromeRenderViewHostTestHarness {
   }
 
   void SetUp() override {
+    // Unit tests don't have a VariationsService country. Compose eligibility
+    // checks require a country before they reach the behavior under test.
+    country_override_ = ComposeEnabling::OverrideCountryForTesting("us");
     scoped_compose_enabled_ = ComposeEnabling::ScopedEnableComposeForTesting();
     ChromeRenderViewHostTestHarness::SetUp();
 
@@ -471,6 +474,7 @@ class ChromeComposeClientTest : public ChromeRenderViewHostTestHarness {
   mojo::Remote<compose::mojom::ComposeSessionUntrustedPageHandler>
       page_handler_;
   ComposeEnabling::ScopedOverride scoped_compose_enabled_;
+  ComposeEnabling::ScopedOverride country_override_;
   raw_ptr<MockHatsService> mock_hats_service_;
 };
 

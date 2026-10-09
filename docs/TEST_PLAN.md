@@ -1,6 +1,6 @@
 # Chromium MCP Agent Browser Test Plan
 
-Status: Protocol tests pass; rerun browser integration after the latest native hook changes
+Status: Protocol and browser integration tests pass on the rebuilt local Chrome (2026-10-09)
 Companion spec: `docs/CHROMIUM_MCP_AGENT_BROWSER_SPEC.md`  
 Canonical TODO: `docs/CHROMIUM_MCP_AGENT_BROWSER_TODO.md`
 
@@ -75,6 +75,22 @@ cancellation, and terminal-state waits:
 cd agent_protocol
 taskset -c 0 env CHROME_BIN=../out/Default/chrome npm run test:chromium
 ```
+
+To verify a real OS/device permission denial, keep the fixture site's Chromium
+permission allowed and disable a system permission in the OS privacy settings.
+The browser integration suite accepts
+`CHROMIUM_MCP_EXPECT_OS_PERMISSION_DENIAL` set to `camera`, `microphone`, or
+`geolocation`. It requires `browser_status=granted`, `combined_status=denied`,
+and `os_or_device_denied=true`, then prints a JSON evidence record with the
+platform and observed statuses.
+
+On Linux desktops with GNOME settings schemas, the browser reads
+`org.gnome.system.location enabled`,
+`org.gnome.desktop.privacy disable-camera`, and
+`org.gnome.desktop.privacy disable-microphone`. Disable the matching setting in
+GNOME Privacy & Security before running the suite. Other Linux desktops without
+these schemas retain the default device-permission behavior. macOS, Windows,
+and ChromeOS continue using their native permission integrations.
 
 ## Required fixture coverage
 

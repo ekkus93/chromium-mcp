@@ -2794,7 +2794,7 @@ TEST_F(TemplateURLServiceTest, TemplateURLCountsOnStartupHistogram) {
   VerifyTemplateUrlCountsHistograms(
       histogram_tester,
       {{".StarterPack", 6},
-       {".Prepopulated", 5},
+       {".Prepopulated", 3},
        {".SearchEngineSetByExtension", 0},
        {".NonFeaturedSiteSearchSetByPolicy", 1},
        {".FeaturedSiteSearchSetByPolicy", 1},

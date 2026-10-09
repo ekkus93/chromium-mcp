@@ -4,10 +4,16 @@
 
 source_set("agent") {
   sources = [
-    "browser_agent_network_event_host.cc",
-    "browser_agent_network_event_host.h",
+    "browser_agent_console_observer.cc",
+    "browser_agent_console_observer.h",
     "browser_agent_mcp_server.cc",
     "browser_agent_mcp_server.h",
+    "browser_agent_mcp_server_events.cc",
+    "browser_agent_mcp_server_protocol.cc",
+    "browser_agent_mcp_server_protocol.h",
+    "browser_agent_mcp_server_tools.cc",
+    "browser_agent_network_event_host.cc",
+    "browser_agent_network_event_host.h",
     "browser_agent_protocol.cc",
     "browser_agent_protocol.h",
     "browser_agent_service.cc",

@@ -1,6 +1,6 @@
 # Chromium MCP Agent Browser TODO
 
-Status: Active implementation; embedded endpoint and core direct page control verified
+Status: Linux implementation complete; macOS, Windows, and ChromeOS permission verification is deferred
 Companion spec: `docs/CHROMIUM_MCP_AGENT_BROWSER_SPEC.md`
 
 ## Working rules
@@ -91,7 +91,8 @@ Companion spec: `docs/CHROMIUM_MCP_AGENT_BROWSER_SPEC.md`
 - [x] Read and set common site permissions through Chromium's content settings map.
 - [x] Expose registered native content settings and combined OS/device permission status.
 - [x] Test combined browser and OS/device permission status and distinguish browser-level denial.
-- [ ] Verify a real OS/device permission denial on a supported platform with controllable OS permission settings; record platform and evidence.
+- [x] Integrate Linux GNOME location, camera, and microphone privacy settings through GSettings; retain the default allow behavior when those schemas are unavailable.
+- [x] Verify real OS-level permission denial on Linux GNOME with the browser site permission granted; record platform and status evidence below.
 - [x] Add requested locale, user-agent, and viewport controls through native Chromium preferences and `WebContents` APIs.
 - [x] Add a native per-page user-agent override using `WebContents::SetUserAgentOverride`.
 - [x] Read and write local and session storage for the current page origin.
@@ -122,18 +123,39 @@ Companion spec: `docs/CHROMIUM_MCP_AGENT_BROWSER_SPEC.md`
 - [x] An MCP client directly controls tabs through Chromium-native APIs.
 - [x] Navigation, observation, evaluation, input, dialogs, downloads, and permissions work in browser integration tests.
 - [x] No CDP, Playwright, sidecar, agent allowlist, redaction layer, or approval gate is required for current control tools.
-- [ ] Rerun MCP and browser integration tests for the latest implementation, and confirm the documentation matches.
+- [x] Rerun MCP and browser integration tests for the latest implementation, and confirm the documentation matches.
 
-## Latest validation attempt (2026-10-09)
+## Latest validation (2026-10-09)
 
-- `autoninja -j1 -C out/Default chrome` completed successfully; Ninja reported
-  no work was pending.
-- `npm test --prefix agent_protocol` passed (2 tests), and the Python
-  integration script passed syntax compilation.
-- `out/Default/unit_tests --gtest_filter='BrowserAgent*'` passed (8 tests).
-- The browser integration run verified subresource request headers, response
-  headers, and response body bytes, then failed during cross-origin iframe
-  JavaScript evaluation: `page.evaluate` returned `null` for
-  `document.body.textContent` in a live committed child frame.
-- Real OS/device permission denial evidence is still unavailable from this
-  headless Ubuntu session without controllable desktop permission settings.
+- `taskset -c 0 env PATH="/home/phil/depot_tools:$PATH" autoninja -j1 -C
+  out/Default chrome` completed successfully.
+- `npm test --prefix agent_protocol` passed (2 tests).
+- `taskset -c 0 out/Default/unit_tests --gtest_filter='BrowserAgent*'`
+  passed (8 tests).
+- `xvfb-run -a taskset -c 0 out/Default/unit_tests
+  --gtest_filter='BrowserAgent*:ChromePermissionsClientTest.*'` passed (17 tests).
+- `taskset -c 0 env CHROME_BIN=../out/Default/chrome npm run test:chromium
+  --prefix agent_protocol` passed, including event streaming, subresource
+  request/response headers and response body bytes, and cross-origin iframe
+  evaluation.
+- The earlier failures were from running the pre-pull local Chrome binary.
+  Rebuilding the current source resolved both the event-stream 403 and iframe
+  evaluation returning `null`; no source behavior change was needed.
+- The Linux permission handler reads GNOME's `org.gnome.system.location`
+  `enabled` setting and the `org.gnome.desktop.privacy` `disable-camera` and
+  `disable-microphone` settings. It observes changes and opens GNOME Privacy
+  settings when available. Linux desktops without these schemas retain the
+  allow-by-default behavior.
+- `CHROMIUM_MCP_EXPECT_OS_PERMISSION_DENIAL` makes the browser integration suite
+  require the browser permission to be granted and the combined status to be
+  denied, then prints the platform/status evidence.
+- With GNOME Location disabled, the geolocation integration run passed on
+  `Linux-7.0.0-34-generic-x86_64-with-glibc2.39` with
+  `browser_status=granted`, `combined_status=denied`,
+  `os_or_device_denied=true`.
+- With GNOME's camera and microphone privacy switches disabled, their
+  integration runs passed on the same platform with the same granted/denied/
+  true status values. The original camera and microphone switches were restored
+  to `false` after the runs.
+- `python3 -m py_compile agent_protocol/tests/chromium_mcp_integration.py`
+  passed; `git diff --check` passed.
