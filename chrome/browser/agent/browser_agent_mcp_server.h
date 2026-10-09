@@ -72,6 +72,25 @@ class BrowserAgentMcpServer : public net::HttpServer::Delegate,
   void HandleRequestOnUiThread(base::DictValue request,
                                int connection_id,
                                base::OnceCallback<void(std::string)> reply);
+  bool HandleContextNetworkAndTracingTools(
+      const base::DictValue& request,
+      int connection_id,
+      base::OnceCallback<void(std::string)>& reply);
+  bool HandlePageSetupTools(const base::DictValue& request,
+                            int connection_id,
+                            base::OnceCallback<void(std::string)>& reply);
+  bool HandlePageReadTools(const base::DictValue& request,
+                           int connection_id,
+                           base::OnceCallback<void(std::string)>& reply);
+  bool HandlePageEditTools(const base::DictValue& request,
+                           int connection_id,
+                           base::OnceCallback<void(std::string)>& reply);
+  bool HandleContextStorageTools(const base::DictValue& request,
+                                 int connection_id,
+                                 base::OnceCallback<void(std::string)>& reply);
+  bool HandleWaitAndDownloadTools(const base::DictValue& request,
+                                  int connection_id,
+                                  base::OnceCallback<void(std::string)>& reply);
   void CompleteRequestOnUiThread(
       int connection_id,
       std::shared_ptr<protocol::CancellationSource> cancellation,
@@ -80,6 +99,8 @@ class BrowserAgentMcpServer : public net::HttpServer::Delegate,
   void CancelRequestOnUiThread(int connection_id);
   void StartEventStreamOnUiThread(int connection_id);
   void StopEventStreamOnUiThread(int connection_id);
+  std::string HandleToolCall(const base::Value* id,
+                             const base::DictValue& request);
   void PollBrowserEvents();
   void PublishBrowserEvent(base::DictValue event);
   void PublishNavigationEvent(std::string page_id,
