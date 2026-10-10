@@ -91,6 +91,21 @@ def run_storage_download_scenarios(state):
     )["elements"]
     assert len(labelledby_button) == 1
     assert labelledby_button[0]["name"] == "Reference name"
+    multi_reference = call_tool(
+        "page.find_elements",
+        {"page_id": page_id, "selector": "#multi-reference", "name": "First Second"},
+    )["elements"]
+    assert len(multi_reference) == 1
+    assert multi_reference[0]["name"] == "First Second"
+    assert call_tool(
+        "page.find_elements",
+        {"page_id": page_id, "selector": "#native-progress", "role": "progressbar"},
+    )["elements"]
+    summary_elements = call_tool(
+        "page.find_elements",
+        {"page_id": page_id, "selector": "#native-summary"},
+    )["elements"]
+    assert summary_elements and summary_elements[0]["role"] == "button", summary_elements
     aria_labelled_button = call_tool(
         "page.find_elements",
         {"page_id": page_id, "role": "button", "name": "ARIA label name"},
@@ -98,10 +113,10 @@ def run_storage_download_scenarios(state):
     assert len(aria_labelled_button) == 1
     alternative_image = call_tool(
         "page.find_elements",
-        {"page_id": page_id, "role": "img", "name": "Alternative image"},
+        {"page_id": page_id, "selector": "#alternative"},
     )["elements"]
-    assert len(alternative_image) == 1
-    for selector in ("#hidden", "#offscreen"):
+    assert len(alternative_image) == 1 and alternative_image[0]["role"] == "img" and alternative_image[0]["name"] == "Alternative image", alternative_image
+    for selector in ("#hidden", "#offscreen", "#ancestor-hidden", "#clipped"):
         assert not call_tool(
             "page.find_elements", {"page_id": page_id, "selector": selector}
         )["elements"]
@@ -109,6 +124,20 @@ def run_storage_download_scenarios(state):
         "page.find_elements", {"page_id": page_id, "selector": "#covered"}
     )["elements"]
     assert len(covered) == 1 and not covered[0]["actionable"]
+    pointer_disabled = call_tool(
+        "page.find_elements", {"page_id": page_id, "selector": "#pointer-disabled"}
+    )["elements"]
+    assert len(pointer_disabled) == 1 and not pointer_disabled[0]["actionable"]
+    inherited_pointer_disabled = call_tool(
+        "page.find_elements",
+        {"page_id": page_id, "selector": "#inherited-pointer-disabled"},
+    )["elements"]
+    assert len(inherited_pointer_disabled) == 1
+    assert not inherited_pointer_disabled[0]["actionable"]
+    pointer_restored = call_tool(
+        "page.find_elements", {"page_id": page_id, "selector": "#pointer-restored"}
+    )["elements"]
+    assert len(pointer_restored) == 1 and pointer_restored[0]["actionable"]
     assert (
         call_tool(
             "page.find_elements",

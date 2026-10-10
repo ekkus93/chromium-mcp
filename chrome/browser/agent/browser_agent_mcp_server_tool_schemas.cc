@@ -103,6 +103,7 @@ base::DictValue PointSchema() {
   schema.Set("type", "object");
   base::DictValue properties;
   properties.Set("page_id", StringPropertySchema());
+  properties.Set("frame_id", StringPropertySchema());
   properties.Set("x", NumberPropertySchema());
   properties.Set("y", NumberPropertySchema());
   schema.Set("properties", std::move(properties));

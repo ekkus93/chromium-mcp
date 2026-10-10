@@ -1,8 +1,9 @@
 # Chromium MCP Agent Browser Remediation TODO
 
-Status: Complete on Linux; cross-platform OS permission verification is deferred
+Status: Historical Linux completion record; review follow-up Linux qualification recorded; cross-platform OS permission verification is deferred
 Spec: [Remediation Specification](CHROMIUM_MCP_AGENT_BROWSER_REMEDIATION_SPEC.md)
 Source checklist: [Agent Browser TODO](CHROMIUM_MCP_AGENT_BROWSER_TODO.md)
+Open follow-up: [Review Follow-up TODO](CHROMIUM_MCP_AGENT_BROWSER_REVIEW_FOLLOWUP_TODO.md)
 
 Each checkbox requires implementation and the stated evidence. Keep completed results and any design decision in this file.
 
@@ -66,7 +67,7 @@ Each checkbox requires implementation and the stated evidence. Keep completed re
 
 ## Completion record
 
-- Source revision: `0b194ec297205c250cd42c4579ec556ae28513e3` (working tree contains the remediation changes; rebuilt binary includes those changes).
+- Source revision: `0b194ec297205c250cd42c4579ec556ae28513e3` was the pre-commit base for the historical, then-uncommitted remediation changes. Those changes were later committed at `b0e91025d8e7e2846d3c5a257c971e46bf5f5682`. The historical test claims below are preserved as recorded; current follow-up results are in the [review follow-up TODO](CHROMIUM_MCP_AGENT_BROWSER_REVIEW_FOLLOWUP_TODO.md).
 - GN args: `is_debug = false`, `is_component_build = true`, `symbol_level = 0`.
 - Chrome binary: `Chromium 156.0.8076.0`, Linux x86_64 (`Linux kawa 7.0.0-34-generic`).
 - Build: `taskset -c 0 autoninja --fast_local -j1 -C out/Default chrome` passed after the network tee changes.

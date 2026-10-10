@@ -572,6 +572,9 @@ std::string BrowserAgentMcpServer::HandleJsonRpc(
       regular.Set("off_the_record", false);
       contexts.Append(std::move(regular));
       for (Profile* off_the_record : profile_->GetAllOffTheRecordProfiles()) {
+        if (destroying_context_profiles_.contains(off_the_record)) {
+          continue;
+        }
         base::DictValue context;
         context.Set("context_id", RegisterContext(off_the_record));
         context.Set("off_the_record", true);
@@ -585,6 +588,17 @@ std::string BrowserAgentMcpServer::HandleJsonRpc(
         base::StringToInt64(uri->substr(cursor_position + 7), &after_cursor);
       }
       base::ListValue events;
+      const base::DictValue* oldest_event =
+          browser_events_.empty() ? nullptr
+                                  : browser_events_.front().GetIfDict();
+      const std::optional<double> oldest_cursor =
+          oldest_event ? oldest_event->FindDouble("cursor") : std::nullopt;
+      resource_data.Set("cursor_expired",
+                        oldest_cursor && after_cursor > 0 &&
+                            after_cursor < *oldest_cursor - 1);
+      if (oldest_cursor) {
+        resource_data.Set("oldest_cursor", *oldest_cursor);
+      }
       for (const base::Value& entry : browser_events_) {
         const base::DictValue* event = entry.GetIfDict();
         const std::optional<double> cursor =

@@ -18,6 +18,8 @@ class BrowserAgentNetworkEventHost final
   explicit BrowserAgentNetworkEventHost(int render_process_host_id);
   ~BrowserAgentNetworkEventHost() override;
 
+  void ShouldCaptureResponse(const base::UnguessableToken& frame_token,
+                             ShouldCaptureResponseCallback callback) override;
   void ReportNetworkEvent(const base::UnguessableToken& frame_token,
                           base::DictValue event) override;
   void Clone(mojo::PendingReceiver<

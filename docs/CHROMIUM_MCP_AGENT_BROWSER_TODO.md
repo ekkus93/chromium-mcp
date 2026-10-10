@@ -1,8 +1,9 @@
 # Chromium MCP Agent Browser TODO
 
-Status: Linux implementation and 2026-10-09 remediation qualification complete; macOS, Windows, and ChromeOS permission verification is deferred
+Status: Linux implementation, remediation, and review follow-up qualification recorded; macOS, Windows, and ChromeOS permission verification is deferred
 Companion spec: `docs/CHROMIUM_MCP_AGENT_BROWSER_SPEC.md`
 Current remediation status: [`CHROMIUM_MCP_AGENT_BROWSER_REMEDIATION_TODO.md`](CHROMIUM_MCP_AGENT_BROWSER_REMEDIATION_TODO.md)
+Review follow-up results: [`CHROMIUM_MCP_AGENT_BROWSER_REVIEW_FOLLOWUP_TODO.md`](CHROMIUM_MCP_AGENT_BROWSER_REVIEW_FOLLOWUP_TODO.md)
 
 ## Working rules
 

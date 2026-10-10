@@ -30,7 +30,12 @@ filter and sends `notifications/resources/updated` with the subscription ID
 when browser events change. Read the resource with
 `chromium-mcp://browser/events?after=<cursor>` to fetch event records; the
 journal retains the newest 256 records. Closing the SSE response stops its
-watch. GET is rejected with HTTP 405 for protocol revision `2026-07-28`.
+watch. Each listen response is capped at 256 KiB of notification bytes. When
+the cap is reached, the server closes that response so the client can reopen
+the watch and read from its last cursor. A resource read reports
+`cursor_expired` and `oldest_cursor` if records before the oldest retained
+cursor were lost. GET is rejected with HTTP 405 for protocol revision
+`2026-07-28`. Malformed listen filters are rejected before a stream starts.
 
 `page.visible_content` returns the main frame's visible text, headings, and
 links. It complements the cross-frame native accessibility snapshot.
@@ -44,12 +49,15 @@ network. Main-frame navigation lifecycle events also include native request
 and response headers. A native URL loader throttle also records subresource
 request and response headers, including CORS-exempt request headers, and
 captures response bodies as Base64 bytes while teeing the original stream to
-the page. Each captured body is limited to 256 KiB; `captured_bytes`,
+the page only while the browser confirms a live observable page. Ineligible
+responses follow Chromium's original body path; request and response metadata
+may still be reported to the browser host and discarded there. Each captured
+body is limited to 256 KiB; `captured_bytes`,
 `total_size`, `total_size_known`, and `truncated` describe the capture. At most
 8 response bodies are captured at once across a renderer; additional bodies
 are forwarded without capture and report `capture_skipped`. Each tee reads
-through a 64 KiB pending buffer and a 1 MiB bounded forwarding pipe, so a slow
-page consumer eventually backpressures the network pipe. At most 8 MiB of
+through a 64 KiB pending buffer and a 32 KiB bounded forwarding pipe, so a slow
+page consumer eventually backpressures the network pipe. At most 256 KiB of
 forwarding-pipe capacity and 2 MiB of captured body strings are active per
 renderer at once. A body event reports `forwarded_bytes`, the bytes accepted by
 the page-facing pipe. Network event queues are limited to 16 MiB and 1024
@@ -101,12 +109,32 @@ Chromium build. `page.permission_status` reports both the browser permission
 and combined OS/device status for geolocation, camera, microphone, and
 notifications on the current document. OS and browser permission boundaries
 still apply.
+`page.click` and `page.hover` accept optional `frame_id`. Without it, `x` and
+`y` are main-page viewport coordinates. With it, they are coordinates in that
+live frame's viewport and input is sent to the frame's native widget. A child
+frame that shares the main-page widget returns an error for frame-relative
+native input; translate its coordinates to the main-page viewport instead.
 `page.find_elements` returns viewport-intersecting matches for a CSS selector,
-role, name, and/or text query. `actionable` indicates whether the element is
-unobscured at its center. Coordinates are relative to the selected frame's
-viewport; child-frame coordinates need translation before using main-page
-native pointer tools. Name and text filters use case-sensitive substring
+role, name, and/or text query. Role and name use Blink's computed accessibility
+values in opted-in renderer processes. Native image roles are reported as the
+ARIA token `img`, and a native `summary` inside `details` is reported as
+`button` when Blink omits its computed role. Elements hidden by an ancestor or fully
+clipped by overflow are excluded. `actionable` indicates whether the visible
+portion's center receives pointer input without another element covering it;
+Chromium hit testing accounts for inherited `pointer-events` and a child's
+explicit override.
+The result's `coordinate_space` is `frame_viewport`; coordinates are relative to the selected frame's
+viewport; pass its `frame_id` to native pointer tools to use child-frame
+coordinates directly, or translate them before using main-page coordinates.
+Name and text filters use case-sensitive substring
 matching.
+`browser.close_context` returns `closed: true` only after its windows have
+closed and the service has invalidated the context handles. If a window is
+still closing or refuses to close, it returns `closed: false` and
+`close_requested: true`; the context remains listed and usable until closure
+finishes or a 60-second close attempt expires. The client can inspect
+`browser.list_contexts` and retry the close after resolving a beforeunload
+dialog. A discovered private context cannot be closed through this tool.
 `page.set_user_agent` uses `WebContents::SetUserAgentOverride` for a page,
 marks its current navigation entry, and clears the override when passed an
 empty string. Reload the page to apply the change to its current document.

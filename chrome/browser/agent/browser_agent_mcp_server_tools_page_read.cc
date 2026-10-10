@@ -176,67 +176,62 @@ bool BrowserAgentMcpServer::HandlePageReadTools(
     const std::string script = base::StrCat({R"JS((() => {
       const q = )JS",
                                              query_json, R"JS(;
+      if (!('computedRole' in Element.prototype) ||
+          !('computedName' in Element.prototype))
+        return {error: 'Blink accessibility computation is unavailable'};
       const roleOf = e => {
-        const explicit = e.getAttribute('role');
-        if (explicit) return explicit;
-        if (e.matches('button,input[type=button],input[type=submit],input[type=reset]')) return 'button';
-        if (e.matches('a[href]')) return 'link';
-        if (e.matches('input[type=checkbox]')) return 'checkbox';
-        if (e.matches('input[type=radio]')) return 'radio';
-        if (e.matches('input[type=range]')) return 'slider';
-        if (e.matches('input[type=number]')) return 'spinbutton';
-        if (e.matches('input:not([type]),input[type=text],input[type=email],input[type=password],input[type=search],input[type=tel],input[type=url],textarea')) return 'textbox';
-        if (e.matches('select[multiple]')) return 'listbox';
-        if (e.matches('select')) return 'combobox';
-        if (e.matches('h1,h2,h3,h4,h5,h6')) return 'heading';
-        if (e.matches('img')) return 'img';
-        if (e.matches('ul,ol')) return 'list';
-        if (e.matches('li')) return 'listitem';
-        if (e.matches('table')) return 'table';
-        if (e.matches('tr')) return 'row';
-        if (e.matches('th')) return 'columnheader';
-        if (e.matches('td')) return 'cell';
-        if (e.matches('form')) return 'form';
-        if (e.matches('nav')) return 'navigation';
-        if (e.matches('main')) return 'main';
-        if (e.matches('header')) return 'banner';
-        if (e.matches('footer')) return 'contentinfo';
-        return '';
+        const role = e.computedRole || '';
+        // computedRole uses "image" for the native image role, while the
+        // public ARIA role token is "img".
+        if (role === 'image') return 'img';
+        // Blink omits the internal disclosure-triangle role for summary.
+        if (!role && e.tagName === 'SUMMARY' &&
+            e.parentElement?.tagName === 'DETAILS') return 'button';
+        return role;
       };
-      const nameOf = e => {
-        const labelledby = e.getAttribute('aria-labelledby');
-        if (labelledby) {
-          const name = labelledby.trim().split(/\\s+/).map(id =>
-              document.getElementById(id)?.innerText || '').join(' ').trim();
-          if (name) return name;
+      const nameOf = e => e.computedName || '';
+      const visibleRect = e => {
+        const bounds = e.getBoundingClientRect();
+        let left = Math.max(0, bounds.left), top = Math.max(0, bounds.top);
+        let right = Math.min(innerWidth, bounds.right);
+        let bottom = Math.min(innerHeight, bounds.bottom);
+        for (let ancestor = e; ancestor; ancestor = ancestor.parentElement) {
+          const style = getComputedStyle(ancestor);
+          if (style.display === 'none' || style.visibility === 'hidden' ||
+              style.visibility === 'collapse' || Number(style.opacity) === 0)
+            return null;
+          if (ancestor === e) continue;
+          const clip = ancestor.getBoundingClientRect();
+          if (/^(hidden|clip|auto|scroll)$/.test(style.overflowX)) {
+            left = Math.max(left, clip.left);
+            right = Math.min(right, clip.right);
+          }
+          if (/^(hidden|clip|auto|scroll)$/.test(style.overflowY)) {
+            top = Math.max(top, clip.top);
+            bottom = Math.min(bottom, clip.bottom);
+          }
         }
-        const aria = e.getAttribute('aria-label');
-        if (aria) return aria;
-        if (e.labels && e.labels.length)
-          return Array.from(e.labels).map(l => l.innerText.trim()).join(' ');
-        if (e.matches('img,area,input[type=image]')) return e.getAttribute('alt') || '';
-        if (e.matches('input[type=button],input[type=submit],input[type=reset]')) return e.value || '';
-        return (e.innerText || e.textContent || '').trim() || e.getAttribute('title') || '';
+        return right > left && bottom > top
+            ? {left, top, right, bottom} : null;
       };
       try {
         return Array.from(document.querySelectorAll(q.selector || '*'))
-            .filter(e => {
-              const s = getComputedStyle(e);
+            .map(e => ({e, visible: visibleRect(e)}))
+            .filter(candidate => candidate.visible)
+            .map(({e, visible}) => {
               const r = e.getBoundingClientRect();
-              return s.display !== 'none' && s.visibility !== 'hidden' &&
-                  Number(s.opacity) > 0 && r.width > 0 && r.height > 0 &&
-                  r.right > 0 && r.bottom > 0 && r.left < innerWidth &&
-                  r.top < innerHeight;
-            })
-            .map(e => {
-              const r = e.getBoundingClientRect();
-              const x = r.left + r.width / 2, y = r.top + r.height / 2;
+              const x = (visible.left + visible.right) / 2;
+              const y = (visible.top + visible.bottom) / 2;
               const hit = document.elementFromPoint(x, y);
-              const actionable = !!hit && (hit === e || e.contains(hit));
+              // Hit testing includes inherited pointer-events and a child's
+              // explicit override of pointer-events:none on an ancestor.
+              const actionable = !e.closest('[inert]') && !e.disabled && !!hit &&
+                  (hit === e || e.contains(hit));
               return {tag: e.tagName.toLowerCase(), role: roleOf(e),
                 name: nameOf(e), text: (e.innerText || '').trim(),
                 x: r.x, y: r.y, width: r.width, height: r.height,
-                center_x: x, center_y: y, actionable};
+                center_x: x, center_y: y, actionable,
+                coordinate_space: 'frame_viewport'};
             })
             .filter(e => (!q.role || e.role === q.role) &&
                 (!q.name || e.name.includes(q.name)) &&

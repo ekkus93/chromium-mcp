@@ -1514,6 +1514,14 @@ void ChromeContentRendererClient::RunScriptsAtDocumentIdle(
 
 void ChromeContentRendererClient::
     SetRuntimeFeaturesDefaultsBeforeBlinkInitialization() {
+  if (base::FeatureList::IsEnabled(features::kBrowserAgentService) &&
+      base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kEnableBrowserAgentService)) {
+    // page.find_elements uses Blink's own accessibility role/name computation
+    // rather than a partial HTML-to-ARIA mapping in injected JavaScript.
+    blink::WebRuntimeFeatures::EnableFeatureFromString(
+        "ComputedAccessibilityInfo", true);
+  }
   // The performance manager service interfaces are provided by the chrome
   // embedder only.
   blink::WebRuntimeFeatures::EnablePerformanceManagerInstrumentation(true);

@@ -1,9 +1,10 @@
 # Chromium MCP Project Orientation
 
-Status: Embedded MCP endpoint and 2026-10-09 remediation implemented and validated on Linux; documented limitations remain
+Status: Embedded MCP endpoint and 2026-10-09 Linux remediation and review follow-up qualification recorded
 Companion spec: `docs/CHROMIUM_MCP_AGENT_BROWSER_SPEC.md`  
 Canonical TODO: `docs/CHROMIUM_MCP_AGENT_BROWSER_TODO.md`
 Current remediation: `docs/CHROMIUM_MCP_AGENT_BROWSER_REMEDIATION_TODO.md`
+Review follow-up results: `docs/CHROMIUM_MCP_AGENT_BROWSER_REVIEW_FOLLOWUP_TODO.md`
 
 ## Repository shape
 

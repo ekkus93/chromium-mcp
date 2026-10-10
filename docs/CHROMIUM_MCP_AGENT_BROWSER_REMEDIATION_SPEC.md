@@ -1,8 +1,9 @@
 # Chromium MCP Agent Browser Remediation Specification
 
-Status: Implemented and validated on Linux; see the remediation checklist for residual limitations
+Status: Historical Linux implementation and validation record; review follow-up Linux qualification recorded
 Date: 2026-10-09
 Companion checklist: [Remediation TODO](CHROMIUM_MCP_AGENT_BROWSER_REMEDIATION_TODO.md)
+Review follow-up: [Review Follow-up Specification](CHROMIUM_MCP_AGENT_BROWSER_REVIEW_FOLLOWUP_SPEC.md)
 Baseline: [Agent Browser Specification](CHROMIUM_MCP_AGENT_BROWSER_SPEC.md) and [canonical TODO](CHROMIUM_MCP_AGENT_BROWSER_TODO.md)
 
 ## Purpose and completion rule

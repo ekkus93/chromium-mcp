@@ -47,6 +47,19 @@ class SlowFixtureHandler(BaseHTTPRequestHandler):
             except BrokenPipeError:
                 pass
             return
+        if self.path == "/large_pattern":
+            body = bytes(range(256)) * (16 * 1024)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            try:
+                for start in range(0, len(body), 64 * 1024):
+                    self.wfile.write(body[start : start + 64 * 1024])
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
         if self.path == "/redirect":
             self.send_response(302)
             self.send_header("Location", "/redirected")
@@ -112,6 +125,40 @@ class SlowFixtureHandler(BaseHTTPRequestHandler):
         # Use a sandboxed srcdoc frame to test cross-origin automation without
         # depending on a second HTTP navigation completing in headless Chrome.
         body = b"<!doctype html><title>Slow fixture</title><h1>Fixture heading</h1><a href='/next'>Next</a><a id='popup' href='/next' onclick=\"window.open('/next','fixture-popup','popup,width=300,height=250');return false\">Open popup</a><button aria-description='Click action' aria-expanded='false' onmouseenter='window.hovered=event.isTrusted' onclick='window.clicked=event.isTrusted'>Click</button><button id='prompt' onclick='window.promptResult=prompt(\"Name?\",\"default\")'>Prompt</button><label for='typed'>Typed label</label><input id='typed' onkeydown='window.lastKey=event.key'><input id='readonly' readonly value='fixed'><span id='referenced-name'>Reference name</span><button id='referenced' aria-labelledby='referenced-name'>ignored button text</button><button aria-label='ARIA label name'>ignored button text</button><img id='alternative' alt='Alternative image' style='width:40px;height:20px'><button id='covered' style='position:absolute;left:150px;top:400px;width:100px;height:40px'>Covered button</button><div id='cover' style='position:absolute;left:150px;top:400px;width:100px;height:40px;z-index:5'></div><button id='hidden' style='display:none'>Hidden</button><button id='offscreen' style='position:absolute;top:200vh'>Offscreen</button><input id='agree' type='checkbox' onchange='window.checkboxTrusted=event.isTrusted'><input id='upload' type='file'><select id='choice' onchange='window.selected=this.value'><option value='one'>One</option><option value='two'>Two</option></select><iframe sandbox='allow-scripts' srcdoc='&lt;!doctype html&gt;&lt;html&gt;&lt;head&gt;&lt;title&gt;Cross origin&lt;/title&gt;&lt;/head&gt;&lt;body&gt;child frame&lt;/body&gt;&lt;/html&gt;'></iframe>ready"
+        body = body.replace(
+            b"<button id='referenced'",
+            b"<span id='first-reference' hidden>First</span>"
+            b"<span id='second-reference'>Second</span>"
+            b"<button id='multi-reference' "
+            b"aria-labelledby='first-reference second-reference'>ignored</button>"
+            b"<progress id='native-progress' value='1' max='2'></progress>"
+            b"<details open><summary id='native-summary'>More details</summary>"
+            b"Detail</details>"
+            b"<button id='referenced'",
+        )
+        body = body.replace(
+            b"child frame&lt;/body&gt;",
+            b"child frame&lt;button id=&quot;child-button&quot; "
+            b"onclick=&quot;window.childClicked=event.isTrusted&quot;&gt;"
+            b"Child click&lt;/button&gt;&lt;/body&gt;",
+        )
+        body = body.replace(
+            b"<input id='readonly'",
+            b"<input id='readback' oninput='this.value=\"changed\"'>"
+            b"<input id='readonly'",
+        )
+        body = body.replace(
+            b"<input id='agree'",
+            b"<div style='opacity:0'><button id='ancestor-hidden'>Hidden by ancestor</button></div>"
+            b"<div style='overflow:hidden;width:0;height:0'>"
+            b"<button id='clipped'>Clipped</button></div>"
+            b"<button id='pointer-disabled' style='pointer-events:none'>No pointer</button>"
+            b"<div style='pointer-events:none'>"
+            b"<button id='inherited-pointer-disabled'>Inherited no pointer</button>"
+            b"<button id='pointer-restored' style='pointer-events:auto'>Restored pointer</button>"
+            b"</div>"
+            b"<input id='agree'",
+        )
         self.send_response(200)
         self.send_header("X-Mcp-Fixture", "navigation-response")
         self.send_header("Content-Length", str(len(body)))
@@ -416,7 +463,7 @@ def main():
         ).exists()
     except Exception:
         log.flush()
-        print(log_path.read_text(errors="replace")[-4000:])
+        print(log_path.read_text(errors="replace")[-12000:])
         raise
     finally:
         process.terminate()

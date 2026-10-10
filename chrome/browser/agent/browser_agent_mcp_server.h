@@ -19,6 +19,7 @@
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread.h"
+#include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "base/values.h"
 #include "chrome/browser/agent/browser_agent_protocol.h"
@@ -101,6 +102,7 @@ class BrowserAgentMcpServer : public net::HttpServer::Delegate,
   void StopEventStreamOnUiThread(int connection_id);
   void MaybeDestroyOwnedContext(std::string context_id,
                                 base::WeakPtr<Profile> profile);
+  void ForgetDestroyedContextProfile(Profile* profile);
   bool HandleBrowserContextToolCall(const base::Value* id,
                                     const protocol::Request& tool_request,
                                     base::DictValue& tool_result,
@@ -158,7 +160,10 @@ class BrowserAgentMcpServer : public net::HttpServer::Delegate,
       frame_handles_;
   std::map<std::string, raw_ptr<Profile>> context_handles_;
   std::set<std::string> owned_context_ids_;
-  std::set<std::string> pending_context_destructions_;
+  std::map<std::string, base::TimeTicks> pending_context_destructions_;
+  // Identity only; a profile can remain listed briefly after its destruction
+  // notification. Never dereference an entry in this set.
+  std::set<Profile*> destroying_context_profiles_;
   std::map<std::string, std::string> context_accept_languages_;
   std::set<raw_ptr<Profile>> observed_context_profiles_;
   int port_ = -1;

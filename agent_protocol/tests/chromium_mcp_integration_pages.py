@@ -216,6 +216,24 @@ def run_page_read_scenarios(state):
         "page.evaluate",
         {
             "page_id": page_id,
+            "expression": "window.patternResult = null; fetch('/large_pattern').then(async r => { const reader = r.body.getReader(); let size = 0, valid = true; for (;;) { const part = await reader.read(); if (part.done) break; for (let i = 0; i < part.value.length; i++) if (part.value[i] !== ((size + i) & 255)) valid = false; size += part.value.length; await new Promise(resolve => setTimeout(resolve, 5)); } window.patternResult = {size, valid}; }).catch(e => { window.patternResult = {error:String(e)}; })",
+        },
+    )
+    pattern_result = None
+    for _ in range(120):
+        result = call_tool(
+            "page.evaluate",
+            {"page_id": page_id, "expression": "window.patternResult"},
+        )["value"]
+        if isinstance(result, dict) and result:
+            pattern_result = result
+            break
+        time.sleep(0.1)
+    assert pattern_result == {"size": 4 * 1024 * 1024, "valid": True}, pattern_result
+    call_tool(
+        "page.evaluate",
+        {
+            "page_id": page_id,
             "expression": "window.redirectResult = null; fetch('/redirect').then(r => r.text()).then(text => { window.redirectResult = {text, url:location.href}; }).catch(e => { window.redirectResult = {error:String(e)}; })",
         },
     )
@@ -301,6 +319,56 @@ def run_page_read_scenarios(state):
             break
         time.sleep(0.1)
     assert cancel_result == {"aborted": True}, cancel_result
+    for _ in range(8):
+        call_tool(
+            "page.evaluate",
+            {
+                "page_id": page_id,
+                "expression": "window.cancelResult = null; const controller = new AbortController(); setTimeout(() => controller.abort(), 50); fetch('/continuous', {signal:controller.signal}).then(r => r.arrayBuffer()).then(b => { window.cancelResult = {aborted:false}; }).catch(e => { window.cancelResult = {aborted:e.name === 'AbortError'}; })",
+            },
+        )
+        for _ in range(50):
+            result = call_tool(
+                "page.evaluate",
+                {"page_id": page_id, "expression": "window.cancelResult"},
+            )["value"]
+            if isinstance(result, dict) and result:
+                assert result == {"aborted": True}, result
+                break
+            time.sleep(0.1)
+        else:
+            raise AssertionError("cancelled fetch did not settle")
+    call_tool(
+        "page.evaluate",
+        {
+            "page_id": page_id,
+            "expression": "window.postCancelResult = null; fetch('/large').then(r => r.arrayBuffer()).then(b => { window.postCancelResult = b.byteLength; }).catch(e => { window.postCancelResult = String(e); })",
+        },
+    )
+    for _ in range(50):
+        post_cancel_result = call_tool(
+            "page.evaluate",
+            {"page_id": page_id, "expression": "window.postCancelResult"},
+        )["value"]
+        if post_cancel_result is not None:
+            break
+        time.sleep(0.1)
+    assert post_cancel_result == 1024 * 1024, post_cancel_result
+    post_cancel_body = None
+    for _ in range(30):
+        events = call_tool("page.network_events", {"page_id": page_id})["events"]
+        post_cancel_body = next(
+            (
+                item for item in events
+                if item.get("event_type") == "subresource_response_body"
+                and item.get("request_url", "").endswith("/large")
+            ),
+            None,
+        )
+        if post_cancel_body:
+            break
+        time.sleep(0.1)
+    assert post_cancel_body and not post_cancel_body.get("capture_skipped"), post_cancel_body
     call_tool(
         "page.evaluate",
         {
@@ -356,7 +424,7 @@ def run_page_read_scenarios(state):
             "expression": "document.body.textContent",
         },
     )
-    assert child_evaluation.get("value") == "child frame", (
+    assert child_evaluation.get("value", "").startswith("child frame"), (
         child_frame,
         child_evaluation,
     )
@@ -371,7 +439,7 @@ def run_page_read_scenarios(state):
         )["value"]
         == "null"
     )
-    assert call_tool(
+    child_body = call_tool(
         "page.find_elements",
         {
             "page_id": page_id,
@@ -380,6 +448,76 @@ def run_page_read_scenarios(state):
             "text": "child frame",
         },
     )["elements"]
+    assert child_body and child_body[0]["coordinate_space"] == "frame_viewport"
+    child_button = call_tool(
+        "page.find_elements",
+        {
+            "page_id": page_id,
+            "frame_id": child_frame["frame_id"],
+            "selector": "#child-button",
+        },
+    )["elements"][0]
+    child_viewport = call_tool(
+        "page.evaluate",
+        {
+            "page_id": page_id,
+            "frame_id": child_frame["frame_id"],
+            "expression": "[innerWidth, innerHeight]",
+        },
+    )["value"]
+    assert child_button["coordinate_space"] == "frame_viewport"
+    assert 0 < child_button["center_x"] < child_viewport[0]
+    assert 0 < child_button["center_y"] < child_viewport[1]
+    call_tool(
+        "page.evaluate",
+        {
+            "page_id": page_id,
+            "expression": "document.querySelector('iframe').scrollIntoView({block:'center'})",
+        },
+    )
+    frame_rect = call_tool(
+        "page.evaluate",
+        {
+            "page_id": page_id,
+            "expression": "(() => { const r = document.querySelector('iframe').getBoundingClientRect(); return [r.x, r.y, document.querySelector('iframe').clientLeft, document.querySelector('iframe').clientTop]; })()",
+        },
+    )["value"]
+    main_x = round(frame_rect[0] + frame_rect[2] + child_button["center_x"])
+    main_y = round(frame_rect[1] + frame_rect[3] + child_button["center_y"])
+    assert call_tool(
+        "page.evaluate",
+        {
+            "page_id": page_id,
+            "expression": f"document.elementFromPoint({main_x}, {main_y})?.tagName",
+        },
+    )["value"] == "IFRAME"
+    child_click = call_tool(
+        "page.click",
+        {
+            "page_id": page_id,
+            "frame_id": child_frame["frame_id"],
+            "x": round(child_button["center_x"]),
+            "y": round(child_button["center_y"]),
+        },
+    )
+    child_clicked = None
+    for _ in range(20):
+        child_clicked = call_tool(
+            "page.evaluate",
+            {
+                "page_id": page_id,
+                "frame_id": child_frame["frame_id"],
+                "expression": "window.childClicked",
+            },
+        )["value"]
+        if child_clicked is not None:
+            break
+        time.sleep(0.1)
+    assert child_clicked is True, (frame_rect, child_button, child_click, child_clicked)
+    call_tool(
+        "page.evaluate",
+        {"page_id": page_id, "expression": "window.scrollTo(0, 0)"},
+    )
     assert (
         call_tool(
             "page.evaluate",
@@ -599,7 +737,7 @@ def run_page_interaction_scenarios(state):
         },
     )
     assert fill_result["filled"] and fill_result["value"] == "filled directly"
-    for unsupported_selector in ("#readonly", "#upload"):
+    for unsupported_selector in ("#readonly", "#upload", "#readback", "#["):
         status, failed_fill = post(
             "tools/call",
             request(

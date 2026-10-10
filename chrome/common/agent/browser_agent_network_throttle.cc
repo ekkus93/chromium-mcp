@@ -8,7 +8,6 @@
 #include <array>
 #include <atomic>
 #include <memory>
-#include <array>
 #include <optional>
 #include <string>
 #include <utility>
@@ -42,7 +41,9 @@ namespace browser_agent {
 
 namespace {
 constexpr size_t kMaximumCapturedResponseBodyBytes = 256 * 1024;
-constexpr size_t kMaximumForwardingPipeCapacityBytes = 1024 * 1024;
+// Deliberately smaller than one read chunk so normal browser fixtures also
+// exercise successful partial writes to the page-facing pipe.
+constexpr size_t kMaximumForwardingPipeCapacityBytes = 32 * 1024;
 constexpr size_t kMaximumSimultaneousBodyCaptures = 8;
 std::atomic_size_t g_active_body_captures{0};
 }  // namespace
@@ -90,6 +91,8 @@ class BrowserAgentResponseBodyTee {
     if (result != MOJO_RESULT_OK && result != MOJO_RESULT_FAILED_PRECONDITION) {
       capture_error_ = true;
       capture_error_result_ = result;
+      Finish();
+      return;
     }
     Pump();
   }
@@ -99,11 +102,7 @@ class BrowserAgentResponseBodyTee {
     if (result != MOJO_RESULT_OK) {
       capture_error_ = true;
       capture_error_result_ = result;
-      destination_.reset();
-      producer_watcher_.reset();
-      pending_body_.clear();
-      pending_position_ = 0;
-      Pump();
+      Finish();
       return;
     }
     Pump();
@@ -128,18 +127,24 @@ class BrowserAgentResponseBodyTee {
         if (result != MOJO_RESULT_OK) {
           capture_error_ = true;
           capture_error_result_ = result;
-          destination_.reset();
-          producer_watcher_.reset();
-          pending_body_.clear();
-          pending_position_ = 0;
-          continue;
+          pumping_ = false;
+          Finish();
+          return;
         }
         pending_position_ += bytes_written;
         forwarded_body_bytes_ += bytes_written;
-        if (pending_position_ == pending_body_.size()) {
-          pending_body_.clear();
-          pending_position_ = 0;
+        if (pending_position_ < pending_body_.size()) {
+          // A successful Mojo write may be partial. Do not replace the pending
+          // bytes with another source read until all of them reach the page.
+          if (!bytes_written) {
+            producer_watcher_->ArmOrNotify();
+            pumping_ = false;
+            return;
+          }
+          continue;
         }
+        pending_body_.clear();
+        pending_position_ = 0;
       }
       std::array<uint8_t, 64 * 1024> buffer;
       size_t bytes_read = 0;
@@ -157,8 +162,11 @@ class BrowserAgentResponseBodyTee {
       }
       if (result != MOJO_RESULT_OK || bytes_read == 0) {
         capture_error_ = true;
-        capture_error_result_ = result;
-        continue;
+        capture_error_result_ =
+            result == MOJO_RESULT_OK ? MOJO_RESULT_DATA_LOSS : result;
+        pumping_ = false;
+        Finish();
+        return;
       }
       const base::span<const uint8_t> data =
           base::span<const uint8_t>(buffer).first(bytes_read);
@@ -227,7 +235,11 @@ class BrowserAgentNetworkResponseForwarder final
       const BrowserAgentNetworkResponseForwarder&) = delete;
   BrowserAgentNetworkResponseForwarder& operator=(
       const BrowserAgentNetworkResponseForwarder&) = delete;
-  ~BrowserAgentNetworkResponseForwarder() override = default;
+  ~BrowserAgentNetworkResponseForwarder() override {
+    if (has_capture_slot_) {
+      g_active_body_captures.fetch_sub(1, std::memory_order_relaxed);
+    }
+  }
 
   void StartBodyCapture(mojo::ScopedDataPipeConsumerHandle source_body,
                         mojo::ScopedDataPipeConsumerHandle* response_body) {
@@ -328,6 +340,7 @@ class BrowserAgentNetworkResponseForwarder final
                            bool capture_error,
                            int capture_error_result) {
     body_capture_complete_ = true;
+    body_capture_failed_ = capture_error;
     if (has_capture_slot_) {
       has_capture_slot_ = false;
       g_active_body_captures.fetch_sub(1, std::memory_order_relaxed);
@@ -340,7 +353,7 @@ class BrowserAgentNetworkResponseForwarder final
     body_event.Set("captured_bytes", static_cast<double>(body.size()));
     body_event.Set("total_size", static_cast<double>(total_bytes));
     body_event.Set("forwarded_bytes", static_cast<double>(forwarded_bytes));
-    body_event.Set("total_size_known", true);
+    body_event.Set("total_size_known", !capture_error);
     body_event.Set("truncated", truncated || body.size() < total_bytes);
     body_event.Set("capture_error", capture_error);
     body_event.Set("capture_error_result", capture_error_result);
@@ -355,6 +368,9 @@ class BrowserAgentNetworkResponseForwarder final
     }
     network::URLLoaderCompletionStatus status = std::move(*completion_status_);
     completion_status_.reset();
+    if (body_capture_failed_ && status.error_code == net::OK) {
+      status.error_code = net::ERR_FAILED;
+    }
     destination_client_->OnComplete(status);
   }
 
@@ -366,14 +382,17 @@ class BrowserAgentNetworkResponseForwarder final
   std::unique_ptr<BrowserAgentResponseBodyTee> body_tee_;
   std::optional<network::URLLoaderCompletionStatus> completion_status_;
   bool body_capture_complete_ = false;
+  bool body_capture_failed_ = false;
   bool has_capture_slot_ = false;
   base::WeakPtrFactory<BrowserAgentNetworkResponseForwarder> weak_factory_{
       this};
 };
 
 BrowserAgentNetworkThrottle::BrowserAgentNetworkThrottle(
-    EventCallback event_callback)
-    : event_callback_(std::move(event_callback)) {}
+    EventCallback event_callback,
+    CaptureEligibilityCallback eligibility_callback)
+    : event_callback_(std::move(event_callback)),
+      eligibility_callback_(std::move(eligibility_callback)) {}
 
 BrowserAgentNetworkThrottle::~BrowserAgentNetworkThrottle() = default;
 
@@ -469,18 +488,42 @@ void BrowserAgentNetworkThrottle::WillProcessResponse(
     return;
   }
 
-  if (!delegate_) {
+  if (!delegate_ || !eligibility_callback_) {
     return;
   }
 
   *defer = true;
   capture_response_ = false;
   auto response_head_copy = response_head->Clone();
+  eligibility_callback_.Run(base::BindOnce(
+      &BrowserAgentNetworkThrottle::OnCaptureEligibilityResolved,
+      weak_factory_.GetWeakPtr(), std::move(response_head_copy)));
+}
+
+void BrowserAgentNetworkThrottle::OnCaptureEligibilityResolved(
+    network::mojom::URLResponseHeadPtr response_head_copy,
+    bool capture) {
+  if (!delegate_) {
+    return;
+  }
+  if (!capture) {
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE,
+        base::BindOnce(&BrowserAgentNetworkThrottle::ResumeWithoutCapture,
+                       weak_factory_.GetWeakPtr()));
+    return;
+  }
   base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE,
       base::BindOnce(&BrowserAgentNetworkThrottle::OnResponseDeferred,
                      weak_factory_.GetWeakPtr(),
                      std::move(response_head_copy)));
+}
+
+void BrowserAgentNetworkThrottle::ResumeWithoutCapture() {
+  if (delegate_) {
+    delegate_->Resume();
+  }
 }
 
 void BrowserAgentNetworkThrottle::OnResponseDeferred(

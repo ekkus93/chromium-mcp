@@ -33,8 +33,11 @@ class BrowserAgentNetworkResponseForwarder;
 class BrowserAgentNetworkThrottle final : public blink::URLLoaderThrottle {
  public:
   using EventCallback = base::RepeatingCallback<void(base::DictValue)>;
+  using CaptureEligibilityCallback =
+      base::RepeatingCallback<void(base::OnceCallback<void(bool)>)>;
 
-  explicit BrowserAgentNetworkThrottle(EventCallback event_callback);
+  BrowserAgentNetworkThrottle(EventCallback event_callback,
+                              CaptureEligibilityCallback eligibility_callback);
   BrowserAgentNetworkThrottle(const BrowserAgentNetworkThrottle&) = delete;
   BrowserAgentNetworkThrottle& operator=(const BrowserAgentNetworkThrottle&) =
       delete;
@@ -54,8 +57,13 @@ class BrowserAgentNetworkThrottle final : public blink::URLLoaderThrottle {
  private:
   void OnResponseDeferred(
       network::mojom::URLResponseHeadPtr response_head_copy);
+  void OnCaptureEligibilityResolved(
+      network::mojom::URLResponseHeadPtr response_head_copy,
+      bool capture);
+  void ResumeWithoutCapture();
 
   const EventCallback event_callback_;
+  const CaptureEligibilityCallback eligibility_callback_;
   std::string request_url_;
   std::string request_id_;
   bool capture_response_ = false;

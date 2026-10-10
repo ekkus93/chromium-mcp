@@ -23,6 +23,27 @@ BrowserAgentNetworkEventHost::BrowserAgentNetworkEventHost(
 
 BrowserAgentNetworkEventHost::~BrowserAgentNetworkEventHost() = default;
 
+void BrowserAgentNetworkEventHost::ShouldCaptureResponse(
+    const base::UnguessableToken& frame_token,
+    ShouldCaptureResponseCallback callback) {
+  auto* process = content::RenderProcessHost::FromID(render_process_host_id_);
+  auto* render_frame_host = content::RenderFrameHost::FromFrameToken(
+      content::GlobalRenderFrameHostToken(render_process_host_id_,
+                                          blink::LocalFrameToken(frame_token)));
+  if (!process || !render_frame_host ||
+      render_frame_host->GetProcess() != process) {
+    std::move(callback).Run(false);
+    return;
+  }
+  auto* profile = Profile::FromBrowserContext(process->GetBrowserContext());
+  auto* service = BrowserAgentServiceFactory::GetForProfile(profile);
+  auto* web_contents =
+      content::WebContents::FromRenderFrameHost(render_frame_host);
+  std::move(callback).Run(
+      service && web_contents &&
+      !service->CreateNetworkEventCallback(web_contents).is_null());
+}
+
 void BrowserAgentNetworkEventHost::ReportNetworkEvent(
     const base::UnguessableToken& frame_token,
     base::DictValue event) {

@@ -32,6 +32,7 @@
 #include "content/public/renderer/render_thread.h"
 #include "extensions/buildflags/buildflags.h"
 #include "extensions/renderer/extension_localization_throttle.h"
+#include "mojo/public/cpp/bindings/callback_helpers.h"
 #include "net/http/structured_headers.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "third_party/blink/public/common/loader/resource_type_util.h"
@@ -223,22 +224,37 @@ URLLoaderThrottleProviderImpl::CreateThrottles(
           pending_event_host;
       browser_agent_network_event_host_->Clone(
           pending_event_host.InitWithNewPipeAndPassReceiver());
-      auto* event_host = new mojo::Remote<
-          chrome::mojom::BrowserAgentNetworkEventHost>(
+      auto event_host = std::make_shared<
+          mojo::Remote<chrome::mojom::BrowserAgentNetworkEventHost>>(
           std::move(pending_event_host));
       auto event_callback = base::BindRepeating(
-          [](mojo::Remote<chrome::mojom::BrowserAgentNetworkEventHost>* host,
-             blink::LocalFrameToken frame_token,
-             base::DictValue event) {
+          [](std::shared_ptr<mojo::Remote<
+                 chrome::mojom::BrowserAgentNetworkEventHost>> host,
+             blink::LocalFrameToken frame_token, base::DictValue event) {
             if (*host) {
               (*host)->ReportNetworkEvent(frame_token.value(),
                                           std::move(event));
             }
           },
-          base::Owned(event_host), local_frame_token.value());
+          event_host, local_frame_token.value());
+      auto eligibility_callback = base::BindRepeating(
+          [](std::shared_ptr<mojo::Remote<
+                 chrome::mojom::BrowserAgentNetworkEventHost>> host,
+             blink::LocalFrameToken frame_token,
+             base::OnceCallback<void(bool)> callback) {
+            if (!*host) {
+              std::move(callback).Run(false);
+              return;
+            }
+            (*host)->ShouldCaptureResponse(
+                frame_token.value(),
+                mojo::WrapCallbackWithDefaultInvokeIfNotRun(std::move(callback),
+                                                            false));
+          },
+          std::move(event_host), local_frame_token.value());
       throttles.emplace_back(
           std::make_unique<browser_agent::BrowserAgentNetworkThrottle>(
-              std::move(event_callback)));
+              std::move(event_callback), std::move(eligibility_callback)));
     }
   }
 

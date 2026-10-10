@@ -172,6 +172,20 @@ def create_mcp_client(endpoint, token):
     status, missing_meta_response = post("tools/list", missing_metadata)
     assert status == 400
     assert json.loads(missing_meta_response)["error"]["code"] == -32602
+    for label, metadata in (
+        ("missing version", {"io.modelcontextprotocol/clientCapabilities": {}}),
+        ("empty version", {**meta["_meta"], "io.modelcontextprotocol/protocolVersion": ""}),
+        ("wrong version type", {**meta["_meta"], "io.modelcontextprotocol/protocolVersion": 7}),
+        ("missing capabilities", {"io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION}),
+        ("wrong capabilities type", {**meta["_meta"], "io.modelcontextprotocol/clientCapabilities": []}),
+    ):
+        status, rejected = post(
+            "tools/list", request("tools/list", {"_meta": metadata})
+        )
+        parsed = json.loads(rejected)
+        assert (status, parsed["id"], parsed["error"]["code"]) == (
+            400, 1, -32602
+        ), (label, parsed)
     malformed_identity_meta = {
         "_meta": {
             "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
@@ -184,6 +198,40 @@ def create_mcp_client(endpoint, token):
     )
     assert status == 400
     assert json.loads(malformed_identity)["error"]["code"] == -32602
+    for empty_field in ("name", "version"):
+        identity = {"name": "test-client", "version": "1"}
+        identity[empty_field] = ""
+        invalid_identity_meta = {
+            "_meta": {
+                **meta["_meta"],
+                "io.modelcontextprotocol/clientInfo": identity,
+            }
+        }
+        status, invalid_identity = post(
+            "tools/list", request("tools/list", invalid_identity_meta)
+        )
+        assert status == 400
+        rejected = json.loads(invalid_identity)
+        assert rejected["id"] == 1 and rejected["error"]["code"] == -32602
+    for invalid_filter in (
+        None,
+        "chromium-mcp://browser/events",
+        {"resourceSubscriptions": "chromium-mcp://browser/events"},
+        {"resourceSubscriptions": [7]},
+        {"resourceSubscriptions": [""]},
+        {"toolsListChanged": "true"},
+        {"unknownNotification": True},
+    ):
+        listen_params = {**meta}
+        if invalid_filter is not None:
+            listen_params["notifications"] = invalid_filter
+        status, rejected_listen = post(
+            "subscriptions/listen",
+            request("subscriptions/listen", listen_params),
+        )
+        assert status == 400, (invalid_filter, status, rejected_listen)
+        rejected = json.loads(rejected_listen)
+        assert rejected["id"] == 1 and rejected["error"]["code"] == -32602
     status, mismatched_method = post(
         "tools/list", request("tools/list", meta), header_method="tools/call"
     )

@@ -1,8 +1,9 @@
 # Chromium MCP Agent Browser Test Plan
 
-Status: Protocol schema passes; browser integration is being updated for the 2026-07-28 transport and rebuilt implementation
+Status: Historical test plan; Linux review follow-up qualification is recorded in the companion TODO
 Companion spec: `docs/CHROMIUM_MCP_AGENT_BROWSER_SPEC.md`  
 Canonical TODO: `docs/CHROMIUM_MCP_AGENT_BROWSER_TODO.md`
+Open review follow-up: `docs/CHROMIUM_MCP_AGENT_BROWSER_REVIEW_FOLLOWUP_TODO.md`
 
 ## Test strategy
 
@@ -80,7 +81,17 @@ For an independently maintained client check, install MCP Python SDK 2.3.0 in
 an isolated environment and set `CHROMIUM_MCP_SDK_PYTHONPATH` to that
 environment's package root when running the same command. The integration
 suite then uses the SDK's Streamable HTTP client for discovery, tool listing,
-tool invocation, and resource reads.
+tool invocation, resource reads, and a live `subscriptions/listen` stream.
+
+The review follow-up regression path also checks response byte integrity under
+backpressure, repeated cancellation, context isolation and resisted closure,
+subscription stream bounds and cursor overrun, HTTP metadata rejection, and
+computed accessibility roles and names. Use the same browser command with
+`CHROMIUM_MCP_TEST_CLOSE_TIMEOUT=1` to exercise the full 60-second resisted
+context close timeout. A Perfetto trace stop has timed out on this Linux host;
+set `CHROMIUM_MCP_SKIP_TRACE=1` to run the follow-up cases independently and
+record the trace result separately. The [review follow-up TODO](CHROMIUM_MCP_AGENT_BROWSER_REVIEW_FOLLOWUP_TODO.md)
+records exact commands, source and binary provenance, and outcomes.
 
 To verify a real OS/device permission denial, keep the fixture site's Chromium
 permission allowed and disable a system permission in the OS privacy settings.

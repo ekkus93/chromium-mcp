@@ -53,3 +53,43 @@ test('rejects malformed MCP requests', () => {
     } },
   }), false);
 });
+
+test('listen filter and optional client identity match runtime validation', () => {
+  for (const metadata of [
+    { 'io.modelcontextprotocol/clientCapabilities': {} },
+    { ...requestMeta, 'io.modelcontextprotocol/protocolVersion': '' },
+    { ...requestMeta, 'io.modelcontextprotocol/protocolVersion': 7 },
+    { 'io.modelcontextprotocol/protocolVersion': '2026-07-28' },
+    { ...requestMeta, 'io.modelcontextprotocol/clientCapabilities': [] },
+  ]) {
+    assert.equal(validate({
+      jsonrpc: '2.0', id: 1, method: 'tools/list', params: { _meta: metadata },
+    }), false, JSON.stringify(metadata));
+  }
+  const listen = notifications => ({
+    jsonrpc: '2.0', id: 'listen-1', method: 'subscriptions/listen',
+    params: notifications === undefined
+      ? { _meta: requestMeta }
+      : { notifications, _meta: requestMeta },
+  });
+  for (const notifications of [
+    undefined,
+    'chromium-mcp://browser/events',
+    { resourceSubscriptions: 'chromium-mcp://browser/events' },
+    { resourceSubscriptions: [7] },
+    { resourceSubscriptions: [''] },
+    { toolsListChanged: 'true' },
+    { unknownNotification: true },
+  ]) {
+    assert.equal(validate(listen(notifications)), false, JSON.stringify(notifications));
+  }
+  assert.equal(validate(listen({ resourceSubscriptions: ['chromium-mcp://browser/events'] })), true);
+  for (const field of ['name', 'version']) {
+    const identity = { name: 'test-client', version: '1' };
+    identity[field] = '';
+    assert.equal(validate({
+      jsonrpc: '2.0', id: 1, method: 'tools/list',
+      params: { _meta: { ...requestMeta, 'io.modelcontextprotocol/clientInfo': identity } },
+    }), false, field);
+  }
+});

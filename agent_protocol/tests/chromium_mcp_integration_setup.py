@@ -4,7 +4,7 @@ import json
 import os
 import platform
 import time
-from http.client import HTTPConnection
+from http.client import HTTPConnection, IncompleteRead
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -15,12 +15,13 @@ def run_context_scenarios(state):
     request = state.request
     meta = state.meta
     fixture_server = state.fixture_server
-    assert call_tool("browser.start_trace", {"categories": "toplevel"})[
-        "started"
-    ]
-    trace_result = call_tool("browser.stop_trace", {})
-    assert trace_result["complete"]
-    assert Path(trace_result["path"]).exists()
+    if os.environ.get("CHROMIUM_MCP_SKIP_TRACE") != "1":
+        assert call_tool("browser.start_trace", {"categories": "toplevel"})[
+            "started"
+        ]
+        trace_result = call_tool("browser.stop_trace", {})
+        assert trace_result["complete"]
+        assert Path(trace_result["path"]).exists()
 
     listed_pages = call_tool("page.list", {})["pages"]
     assert listed_pages
@@ -146,14 +147,92 @@ def run_context_scenarios(state):
             for item in cookies
         ), cookies
     assert call_tool(
+        "context.set_permission",
+        {
+            "context_id": second_private_context,
+            "url": cookie_url,
+            "permission": "geolocation",
+            "setting": "allow",
+        },
+    )["setting"] == "allow"
+    assert call_tool(
+        "context.permission",
+        {"context_id": private_context, "url": cookie_url, "permission": "geolocation"},
+    )["setting"] == "block"
+    context_pages = []
+    download_guids = []
+    for index, context_id in enumerate((private_context, second_private_context)):
+        page = call_tool("page.new", {"context_id": context_id})["page_id"]
+        context_pages.append(page)
+        call_tool("page.goto", {"page_id": page, "url": cookie_url + "slow"})
+        call_tool("page.wait_for_load_state", {"page_id": page})
+        value = f"isolated-{index}"
+        call_tool(
+            "page.set_storage",
+            {
+                "page_id": page,
+                "local": {"shared_key": value},
+                "session": {"shared_key": value},
+            },
+        )
+        download = call_tool(
+            "page.download",
+            {
+                "page_id": page,
+                "url": cookie_url + "download",
+                "path": str(state.profile / f"context-{index}-download.txt"),
+            },
+        )
+        download_guids.append(download["download_guid"])
+    for index, (context_id, page) in enumerate(
+        zip((private_context, second_private_context), context_pages)
+    ):
+        value = f"isolated-{index}"
+        storage = call_tool("page.storage_state", {"page_id": page})
+        assert storage["local"]["shared_key"] == value, storage
+        assert storage["session"]["shared_key"] == value, storage
+        assert call_tool(
+            "download.wait", {"context_id": context_id, "guid": download_guids[index]}
+        )["state"] == "complete"
+        downloads = call_tool("context.downloads", {"context_id": context_id})[
+            "downloads"
+        ]
+        assert any(item["guid"] == download_guids[index] for item in downloads)
+        assert not any(item["guid"] == download_guids[1 - index] for item in downloads)
+        pages = call_tool("page.list", {"context_id": context_id})["pages"]
+        assert any(item["page_id"] == page for item in pages), pages
+        assert not any(item["page_id"] == context_pages[1 - index] for item in pages)
+    for page in context_pages:
+        assert call_tool("page.close", {"page_id": page})["closed"]
+    first_close = call_tool(
         "browser.close_context", {"context_id": private_context}
-    )["closed"]
+    )
+    assert first_close["closed"] or first_close["close_requested"]
+    for _ in range(100):
+        if not any(
+            item["context_id"] == private_context
+            for item in call_tool("browser.list_contexts", {})["contexts"]
+        ):
+            break
+        time.sleep(0.1)
+    else:
+        raise AssertionError("first owned context remained listed")
     assert call_tool(
         "context.storage_state", {"context_id": second_private_context}
     )["cookies"]
-    assert call_tool(
+    second_close = call_tool(
         "browser.close_context", {"context_id": second_private_context}
-    )["closed"]
+    )
+    assert second_close["closed"] or second_close["close_requested"]
+    for _ in range(100):
+        if not any(
+            item["context_id"] == second_private_context
+            for item in call_tool("browser.list_contexts", {})["contexts"]
+        ):
+            break
+        time.sleep(0.1)
+    else:
+        raise AssertionError("second owned context remained listed")
     closed_context = request(
         "tools/call",
         {
@@ -176,6 +255,14 @@ def run_context_scenarios(state):
         "page.goto", {"page_id": private_page["page_id"], "url": private_url}
     )
     call_tool("page.wait_for_load_state", {"page_id": private_page["page_id"]})
+    private_frames = call_tool(
+        "page.frames", {"page_id": private_page["page_id"]}
+    )["frames"]
+    private_child_frame = next(
+        (item["frame_id"] for item in private_frames if not item["main_frame"]),
+        None,
+    )
+    assert private_child_frame
     call_tool(
         "page.evaluate",
         {
@@ -203,9 +290,66 @@ def run_context_scenarios(state):
         and event["url"].endswith("/next")
         for event in private_events
     ), private_events
-    assert call_tool(
+    call_tool(
+        "page.evaluate",
+        {
+            "page_id": private_page["page_id"],
+            "expression": "window.onbeforeunload = e => { e.preventDefault(); e.returnValue = ''; }",
+        },
+    )
+    button = call_tool(
+        "page.find_elements",
+        {"page_id": private_page["page_id"], "selector": "button"},
+    )["elements"][0]
+    call_tool(
+        "page.click",
+        {
+            "page_id": private_page["page_id"],
+            "x": round(button["center_x"]),
+            "y": round(button["center_y"]),
+        },
+    )
+    close_result = call_tool(
         "browser.close_context", {"context_id": window_context}
-    )["closed"]
+    )
+    assert close_result["closed"] is False and close_result["close_requested"]
+    pending_dialog = None
+    for _ in range(30):
+        dialog = call_tool("page.dialog_info", {"page_id": private_page["page_id"]})
+        if dialog["open"]:
+            pending_dialog = dialog
+            break
+        time.sleep(0.1)
+    assert pending_dialog and pending_dialog["type"] == "beforeunload"
+    assert call_tool(
+        "page.dismiss_dialog", {"page_id": private_page["page_id"]}
+    )["handled"]
+    assert any(
+        item["context_id"] == window_context
+        for item in call_tool("browser.list_contexts", {})["contexts"]
+    )
+    if os.environ.get("CHROMIUM_MCP_TEST_CLOSE_TIMEOUT") == "1":
+        time.sleep(61)
+        assert any(
+            item["context_id"] == window_context
+            for item in call_tool("browser.list_contexts", {})["contexts"]
+        )
+        assert call_tool(
+            "page.get_info", {"page_id": private_page["page_id"]}
+        )["page_id"] == private_page["page_id"]
+    call_tool(
+        "page.evaluate",
+        {"page_id": private_page["page_id"], "expression": "window.onbeforeunload = null"},
+    )
+    close_result = call_tool("browser.close_context", {"context_id": window_context})
+    assert close_result["closed"] or close_result["close_requested"]
+    for _ in range(100):
+        listed = call_tool("browser.list_contexts", {})["contexts"]
+        if not any(item["context_id"] == window_context for item in listed):
+            break
+        time.sleep(0.1)
+    else:
+        raise AssertionError("owned context remained listed after closure")
     stale_private_page = request(
         "tools/call",
         {
@@ -217,6 +361,26 @@ def run_context_scenarios(state):
     _, stale_private_page_response = post("tools/call", stale_private_page)
     assert stale_private_page_response["result"].get("isError")
     assert stale_private_page_response["result"]["structuredContent"]["error_code"]
+    for stale_tool, arguments in (
+        ("page.network_events", {"page_id": private_page["page_id"]}),
+        ("page.console_messages", {"page_id": private_page["page_id"]}),
+        ("page.evaluate", {
+            "page_id": private_page["page_id"],
+            "frame_id": private_child_frame,
+            "expression": "document.title",
+        }),
+    ):
+        _, stale_response = post(
+            "tools/call",
+            request("tools/call", {
+                "name": stale_tool,
+                "arguments": arguments,
+                **meta,
+            }),
+        )
+        assert stale_response["result"].get("isError"), (
+            stale_tool, stale_response
+        )
     stale_window_context = request(
         "tools/call",
         {
@@ -282,7 +446,7 @@ def run_page_setup_scenarios(state):
 
     acknowledged = next_event()
     assert acknowledged["method"] == "notifications/subscriptions/acknowledged"
-    assert acknowledged["_meta"]["io.modelcontextprotocol/subscriptionId"] == "browser-events-1", acknowledged
+    assert acknowledged["params"]["_meta"]["io.modelcontextprotocol/subscriptionId"] == "browser-events-1", acknowledged
     assert acknowledged["params"]["notifications"]["resourceSubscriptions"] == [
         "chromium-mcp://browser/events"
     ]
@@ -324,7 +488,45 @@ def run_page_setup_scenarios(state):
 
     second_acknowledged = second_event()
     assert second_acknowledged["method"] == "notifications/subscriptions/acknowledged"
-    assert second_acknowledged["_meta"]["io.modelcontextprotocol/subscriptionId"] == "browser-events-2"
+    assert second_acknowledged["params"]["_meta"]["io.modelcontextprotocol/subscriptionId"] == "browser-events-2"
+    unsupported_connection = HTTPConnection(
+        event_target.hostname, event_target.port, timeout=10
+    )
+    unsupported_connection.request(
+        "POST",
+        event_target.path,
+        body=json.dumps({
+            "jsonrpc": "2.0",
+            "id": "unsupported-listener",
+            "method": "subscriptions/listen",
+            "params": {
+                "notifications": {
+                    "resourceSubscriptions": ["chromium-mcp://browser/unknown"],
+                    "toolsListChanged": True,
+                },
+                **state.meta,
+            },
+        }),
+        headers={
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json",
+            "MCP-Protocol-Version": state.protocol_version,
+            "Mcp-Method": "subscriptions/listen",
+            "Authorization": f"Bearer {token}",
+            "Host": event_target.netloc,
+        },
+    )
+    unsupported_response = unsupported_connection.getresponse()
+    assert unsupported_response.status == 200
+    while True:
+        line = unsupported_response.readline()
+        assert line, "unsupported listener closed before acknowledgment"
+        if line.startswith(b"data: "):
+            unsupported_ack = json.loads(line[6:])
+            break
+    assert unsupported_ack["params"]["notifications"] == {
+        "resourceSubscriptions": []
+    }, unsupported_ack
     event_cursor = 0
 
     def next_browser_event(event_type, page_id=None):
@@ -352,7 +554,7 @@ def run_page_setup_scenarios(state):
             event_cursor = max(event_cursor, int(journal["next_cursor"]))
             update = next_event()
             assert update["method"] == "notifications/resources/updated"
-            assert update["_meta"]["io.modelcontextprotocol/subscriptionId"] == "browser-events-1"
+            assert update["params"]["_meta"]["io.modelcontextprotocol/subscriptionId"] == "browser-events-1"
         raise AssertionError(f"Timed out waiting for {event_type} on {page_id}")
 
     new_page = call_tool("page.new", {})
@@ -360,7 +562,17 @@ def run_page_setup_scenarios(state):
     assert next_browser_event("tab_created", page_id)["page_id"] == page_id
     second_update = second_event()
     assert second_update["method"] == "notifications/resources/updated"
-    assert second_update["_meta"]["io.modelcontextprotocol/subscriptionId"] == "browser-events-2"
+    assert second_update["params"]["_meta"]["io.modelcontextprotocol/subscriptionId"] == "browser-events-2"
+    unsupported_connection.sock.settimeout(0.2)
+    try:
+        while True:
+            line = unsupported_response.readline()
+            assert not line.startswith(b"data: "), line
+            if not line:
+                raise AssertionError("unsupported listener closed unexpectedly")
+    except TimeoutError:
+        pass
+    unsupported_connection.close()
     target_url = f"http://127.0.0.1:{fixture_server.server_port}/slow"
     assert call_tool("page.goto", {"page_id": page_id, "url": target_url})
     assert call_tool(
@@ -395,6 +607,102 @@ def run_page_setup_scenarios(state):
     next_browser_event("tab_created", closing_page_id)
     assert call_tool("page.close", {"page_id": closing_page_id})["closed"]
     next_browser_event("tab_closed", closing_page_id)
+    large_id = "slow-listener-" + "x" * (245 * 1024)
+    slow_connection = HTTPConnection(event_target.hostname, event_target.port, timeout=10)
+    slow_connection.request(
+        "POST",
+        event_target.path,
+        body=json.dumps({
+            "jsonrpc": "2.0",
+            "id": large_id,
+            "method": "subscriptions/listen",
+            "params": {
+                "notifications": {
+                    "resourceSubscriptions": ["chromium-mcp://browser/events"]
+                },
+                **state.meta,
+            },
+        }),
+        headers={
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json",
+            "MCP-Protocol-Version": state.protocol_version,
+            "Mcp-Method": "subscriptions/listen",
+            "Authorization": f"Bearer {token}",
+            "Host": event_target.netloc,
+        },
+    )
+    slow_response = slow_connection.getresponse()
+    assert slow_response.status == 200
+    while True:
+        line = slow_response.readline()
+        assert line
+        if line.startswith(b"data: "):
+            assert json.loads(line[6:])["method"] == (
+                "notifications/subscriptions/acknowledged"
+            )
+            break
+    slow_page = call_tool("page.new", {})["page_id"]
+    try:
+        while True:
+            line = slow_response.readline()
+            if not line:
+                break
+            assert not line.startswith(b"data: "), "exhausted listener sent an update"
+    except IncompleteRead:
+        pass
+    slow_connection.close()
+    assert call_tool("page.close", {"page_id": slow_page})["closed"]
+    _, before_overrun = state.post(
+        "resources/read",
+        state.request("resources/read", {
+            "uri": "chromium-mcp://browser/events",
+            **state.meta,
+        }),
+    )
+    cursor_before_overrun = int(json.loads(
+        before_overrun["result"]["contents"][0]["text"]
+    )["next_cursor"])
+    overrun_page = call_tool("page.new", {})["page_id"]
+    for _ in range(30):
+        _, watch_read = state.post(
+            "resources/read",
+            state.request("resources/read", {
+                "uri": f"chromium-mcp://browser/events?after={cursor_before_overrun}",
+                **state.meta,
+            }),
+        )
+        watch_journal = json.loads(watch_read["result"]["contents"][0]["text"])
+        if any(
+            entry["event"].get("event_type") == "tab_created"
+            and entry["event"].get("page_id") == overrun_page
+            for entry in watch_journal["events"]
+        ):
+            break
+        time.sleep(0.1)
+    else:
+        raise AssertionError("overrun page was not observed")
+    for index in range(130):
+        call_tool(
+            "page.goto",
+            {"page_id": overrun_page, "url": f"data:text/html,overrun-{index}"},
+        )
+    overrun_journal = None
+    for _ in range(50):
+        _, overrun_read = state.post(
+            "resources/read",
+            state.request("resources/read", {
+                "uri": f"chromium-mcp://browser/events?after={cursor_before_overrun}",
+                **state.meta,
+            }),
+        )
+        overrun_journal = json.loads(overrun_read["result"]["contents"][0]["text"])
+        if int(overrun_journal["next_cursor"]) - cursor_before_overrun > 256:
+            break
+        time.sleep(0.1)
+    assert overrun_journal["cursor_expired"], overrun_journal
+    assert overrun_journal["oldest_cursor"] > cursor_before_overrun + 1
+    assert call_tool("page.close", {"page_id": overrun_page})["closed"]
     event_connection.close()
     second_connection.close()
     assert any(

@@ -10,6 +10,10 @@ import "mojo/public/mojom/base/unguessable_token.mojom";
 // Reports renderer-initiated resource events to the browser agent for the
 // frame that owns this interface.
 interface BrowserAgentNetworkEventHost {
+  // Checks the frame against the browser-owned page registry before a response
+  // body is intercepted in the renderer.
+  ShouldCaptureResponse(mojo_base.mojom.UnguessableToken frame_token)
+      => (bool capture);
   ReportNetworkEvent(mojo_base.mojom.UnguessableToken frame_token,
                      mojo_base.mojom.DictionaryValue event);
   Clone(pending_receiver<BrowserAgentNetworkEventHost> receiver);

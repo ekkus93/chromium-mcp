@@ -140,6 +140,9 @@ bool BrowserAgentMcpServer::HandleBrowserContextToolCall(
     regular_context.Set("off_the_record", false);
     contexts.Append(std::move(regular_context));
     for (Profile* off_the_record : profile_->GetAllOffTheRecordProfiles()) {
+      if (destroying_context_profiles_.contains(off_the_record)) {
+        continue;
+      }
       base::DictValue context;
       context.Set("context_id", RegisterContext(off_the_record));
       context.Set("off_the_record", true);
@@ -192,33 +195,18 @@ bool BrowserAgentMcpServer::HandleBrowserContextToolCall(
           return true;
         });
       }
-      std::erase_if(context_handles_,
-                    [&](const auto& entry) { return entry.second == target; });
-      owned_context_ids_.erase(*context_id);
-      pending_context_destructions_.insert(*context_id);
-      std::erase_if(page_context_ids_, [&](const auto& entry) {
-        if (entry.second != *context_id) {
-          return false;
-        }
-        page_handles_.erase(entry.first);
-        console_observers_.erase(entry.first);
-        std::erase_if(frame_handles_, [&](const auto& frame_entry) {
-          return frame_entry.second.first == entry.first;
-        });
-        return true;
-      });
       for (BrowserWindowInterface* browser : open_browsers) {
         browser->GetWindow()->Close();
       }
+      pending_context_destructions_.insert_or_assign(
+          *context_id, base::TimeTicks::Now() + base::Seconds(60));
+      MaybeDestroyOwnedContext(*context_id, target->GetWeakPtr());
       tool_result.Set("context_id", *context_id);
-      tool_result.Set("closed", true);
-      result_text = "Closed private browser context.";
-      base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
-          FROM_HERE,
-          base::BindOnce(&BrowserAgentMcpServer::MaybeDestroyOwnedContext,
-                         weak_factory_.GetWeakPtr(), *context_id,
-                         target->GetWeakPtr()),
-          base::Milliseconds(100));
+      const bool closed = !owned_context_ids_.contains(*context_id);
+      tool_result.Set("closed", closed);
+      tool_result.Set("close_requested", !closed);
+      result_text = closed ? "Closed private browser context."
+                           : "Requested private browser context closure.";
     }
     if (result_text.empty()) {
       result.Set("isError", true);

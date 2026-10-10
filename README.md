@@ -1,5 +1,38 @@
 # ![Logo](chrome/app/theme/chromium/product_logo_64.png) Chromium
 
+## Chromium MCP Agent Browser
+
+This Chromium fork adds an opt-in MCP server inside the browser process. It
+exposes browser, context, page, storage, accessibility, network, download, and
+input tools through Chromium's native APIs. It does not use CDP, Playwright, or
+a separate MCP sidecar. The feature is experimental and currently qualified on
+Linux; it is disabled unless explicitly enabled at startup.
+
+Start with the [Chromium MCP development guide](docs/CHROMIUM_MCP_DEVELOPMENT.md)
+for checkout prerequisites, development setup, build and test commands, MCP
+client configuration, and packaging status.
+
+Project references:
+
+- [Tool Contract](docs/TOOL_CONTRACT.md) — available tools and their behavior.
+- [Security Model](docs/SECURITY_MODEL.md) — endpoint, token, profile, and
+  browser security boundaries.
+- [Test Plan](docs/TEST_PLAN.md) — focused validation and integration suites.
+- [Project Orientation](docs/PROJECT_ORIENTATION.md) — repository layout,
+  upstream sync, and Chromium build guidance.
+- [Agent Browser Specification](docs/CHROMIUM_MCP_AGENT_BROWSER_SPEC.md)
+- [Agent Browser TODO](docs/CHROMIUM_MCP_AGENT_BROWSER_TODO.md)
+- [Remediation Specification](docs/CHROMIUM_MCP_AGENT_BROWSER_REMEDIATION_SPEC.md)
+- [Remediation TODO](docs/CHROMIUM_MCP_AGENT_BROWSER_REMEDIATION_TODO.md)
+- [Review Follow-up Specification](docs/CHROMIUM_MCP_AGENT_BROWSER_REVIEW_FOLLOWUP_SPEC.md)
+- [Review Follow-up TODO](docs/CHROMIUM_MCP_AGENT_BROWSER_REVIEW_FOLLOWUP_TODO.md)
+
+There is no maintained AppImage build or release recipe in this repository.
+See the development guide for the supported Chromium build output and current
+packaging scope.
+
+## About Chromium
+
 Chromium is an open-source browser project that aims to build a safer, faster,
 and more stable way for all users to experience the web.
 
@@ -19,29 +52,3 @@ Android WebView, Ash). Even if these products have multiple executables, the
 code should be in subdirectories of the product.
 
 If you found a bug, please file it at https://crbug.com/new.
-
-## Chromium MCP Agent Browser
-
-This fork adds an MCP server inside Chromium. MCP requests are handled by a
-browser-process service that calls Chromium's native browser APIs directly. It
-does not use CDP, Playwright, or a separate MCP sidecar to control the browser.
-
-The MCP surface is intended to expose the browser's full native capabilities,
-without an agent-specific policy allowlist or approval layer. Chromium's normal
-platform boundaries still apply, including operating-system permissions,
-profile ownership, and the browser sandbox.
-
-Project entry points:
-
-- [Agent Browser Specification](docs/CHROMIUM_MCP_AGENT_BROWSER_SPEC.md)
-- [Agent Browser TODO](docs/CHROMIUM_MCP_AGENT_BROWSER_TODO.md)
-- [Agent Browser Remediation Specification](docs/CHROMIUM_MCP_AGENT_BROWSER_REMEDIATION_SPEC.md)
-- [Agent Browser Remediation TODO](docs/CHROMIUM_MCP_AGENT_BROWSER_REMEDIATION_TODO.md)
-- [Project Orientation](docs/PROJECT_ORIENTATION.md)
-- [Security Model](docs/SECURITY_MODEL.md)
-- [Tool Contract](docs/TOOL_CONTRACT.md)
-- [Test Plan](docs/TEST_PLAN.md)
-
-The in-process MCP service is disabled by default and requires an explicit
-feature/runtime opt-in. See [Project Orientation](docs/PROJECT_ORIENTATION.md)
-for build and development commands.

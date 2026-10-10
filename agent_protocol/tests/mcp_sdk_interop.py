@@ -6,6 +6,8 @@ import sys
 import httpx2
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamable_http_client
+from mcp.client.subscriptions import listen
+from mcp.shared.subscriptions import ResourceUpdated
 
 
 async def main(endpoint, token):
@@ -26,6 +28,16 @@ async def main(endpoint, token):
                     "chromium-mcp://browser/version"
                 )
                 assert resource.contents
+                events_uri = "chromium-mcp://browser/events"
+                async with listen(
+                    session, resource_subscriptions=[events_uri]
+                ) as subscription:
+                    assert events_uri in subscription.honored.resource_subscriptions
+                    created = await session.call_tool("page.new", {})
+                    assert not created.is_error
+                    event = await asyncio.wait_for(anext(subscription), timeout=10)
+                    assert isinstance(event, ResourceUpdated)
+                    assert event.uri == events_uri
 
 
 if __name__ == "__main__":

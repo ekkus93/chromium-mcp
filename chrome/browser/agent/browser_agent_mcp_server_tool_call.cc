@@ -355,12 +355,35 @@ std::string BrowserAgentMcpServer::HandleToolCall(
                                        tool_request.tool == "page.hover")) {
       const std::optional<int> x = tool_request.arguments.FindInt("x");
       const std::optional<int> y = tool_request.arguments.FindInt("y");
-      content::RenderWidgetHostView* view =
+      const std::string* requested_frame_id =
+          tool_request.arguments.FindString("frame_id");
+      content::RenderWidgetHostView* page_view =
           selected_tab->GetContents()->GetRenderWidgetHostView();
+      content::RenderWidgetHostView* view = page_view;
+      bool shared_child_widget = false;
+      if (requested_frame_id) {
+        auto frame_handle = frame_handles_.find(*requested_frame_id);
+        content::RenderFrameHost* frame =
+            frame_handle != frame_handles_.end() &&
+                    frame_handle->second.first == *requested_page_id
+                ? content::RenderFrameHost::FromID(frame_handle->second.second)
+                : nullptr;
+        view = frame ? frame->GetView() : nullptr;
+        shared_child_widget =
+            frame &&
+            frame != selected_tab->GetContents()->GetPrimaryMainFrame() &&
+            view == page_view;
+      }
       content::RenderWidgetHost* widget =
           view ? view->GetRenderWidgetHost() : nullptr;
-      if (!x || !y || !widget) {
-        tool_result.Set("error", "Integer x and y coordinates are required.");
+      if (shared_child_widget) {
+        tool_result.Set("error",
+                        "This child frame shares the page widget; translate "
+                        "its coordinates to the main-page viewport.");
+      } else if (!x || !y || !widget) {
+        tool_result.Set(
+            "error",
+            "Integer x and y coordinates and a live frame are required.");
       } else {
         const gfx::PointF location(*x, *y);
         widget->ForwardMouseEvent(blink::WebMouseEvent(
@@ -378,6 +401,12 @@ std::string BrowserAgentMcpServer::HandleToolCall(
               blink::WebInputEvent::kNoModifiers, base::TimeTicks::Now()));
         }
         tool_result.Set("page_id", *requested_page_id);
+        if (requested_frame_id) {
+          tool_result.Set("frame_id", *requested_frame_id);
+        }
+        tool_result.Set("coordinate_space", requested_frame_id
+                                                ? "frame_viewport"
+                                                : "page_viewport");
         tool_result.Set("x", *x);
         tool_result.Set("y", *y);
         const bool click = tool_request.tool == "page.click";
@@ -598,7 +627,8 @@ std::string BrowserAgentMcpServer::HandleToolCall(
 void BrowserAgentMcpServer::MaybeDestroyOwnedContext(
     std::string context_id,
     base::WeakPtr<Profile> context_profile) {
-  if (!pending_context_destructions_.contains(context_id)) {
+  auto pending = pending_context_destructions_.find(context_id);
+  if (pending == pending_context_destructions_.end()) {
     return;
   }
   Profile* target = context_profile.get();
@@ -615,6 +645,12 @@ void BrowserAgentMcpServer::MaybeDestroyOwnedContext(
     });
   }
   if (has_open_windows) {
+    if (base::TimeTicks::Now() >= pending->second) {
+      // Closure was refused or stalled. Keep the context and its handles live
+      // so the client can observe the failure and retry after resolving it.
+      pending_context_destructions_.erase(pending);
+      return;
+    }
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
         FROM_HERE,
         base::BindOnce(&BrowserAgentMcpServer::MaybeDestroyOwnedContext,
@@ -623,9 +659,37 @@ void BrowserAgentMcpServer::MaybeDestroyOwnedContext(
         base::Milliseconds(100));
     return;
   }
-  pending_context_destructions_.erase(context_id);
+  pending_context_destructions_.erase(pending);
+  std::erase_if(context_handles_,
+                [target](const auto& entry) { return entry.second == target; });
+  owned_context_ids_.erase(context_id);
+  std::erase_if(page_context_ids_, [&](const auto& entry) {
+    if (entry.second != context_id) {
+      return false;
+    }
+    page_handles_.erase(entry.first);
+    console_observers_.erase(entry.first);
+    std::erase_if(frame_handles_, [&](const auto& frame_entry) {
+      return frame_entry.second.first == entry.first;
+    });
+    return true;
+  });
+  destroying_context_profiles_.insert(target);
   ProfileDestroyer::DestroyOTRProfileWhenAppropriateWithTimeout(
       target, base::Seconds(60));
+}
+
+void BrowserAgentMcpServer::ForgetDestroyedContextProfile(Profile* profile) {
+  const auto profiles = profile_->GetAllOffTheRecordProfiles();
+  if (std::ranges::find(profiles, profile) == profiles.end()) {
+    destroying_context_profiles_.erase(profile);
+    return;
+  }
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+      FROM_HERE,
+      base::BindOnce(&BrowserAgentMcpServer::ForgetDestroyedContextProfile,
+                     weak_factory_.GetWeakPtr(), profile),
+      base::Milliseconds(100));
 }
 
 }  // namespace browser_agent

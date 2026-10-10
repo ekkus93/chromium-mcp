@@ -36,6 +36,7 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/agent/browser_agent_console_observer.h"
+#include "chrome/browser/agent/browser_agent_mcp_server_state.h"
 #include "chrome/browser/agent/browser_agent_protocol.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -120,117 +121,6 @@
 namespace browser_agent {
 
 namespace {
-const net::NetworkTrafficAnnotationTag& GetTrafficAnnotation() {
-  static const net::NetworkTrafficAnnotationTag annotation =
-      net::DefineNetworkTrafficAnnotation("chromium_embedded_mcp", R"(
-        semantics {
-          sender: "Chromium Embedded MCP Server"
-          description: "Serves local MCP requests to the Chromium browser."
-          trigger: "A user-enabled local MCP client sends a request."
-          data: "Browser state and tool arguments selected by the local client."
-          destination: OTHER
-        }
-        policy {
-          cookies_allowed: NO
-          setting: "The service requires an explicit feature and command-line opt-in."
-          policy_exception_justification: "This is a loopback-only developer feature."
-        })");
-  return annotation;
-}
-
-}  // namespace
-
-class BrowserAgentMcpServerState
-    : public base::RefCountedThreadSafe<BrowserAgentMcpServerState> {
- public:
-  void SetServer(net::HttpServer* server) {
-    server_ = server;
-    if (!server_) {
-      subscriptions_.clear();
-    }
-  }
-
-  void Send(int connection_id, net::HttpStatusCode status, std::string body) {
-    if (server_) {
-      server_->Send(connection_id, status, body, "application/json",
-                    GetTrafficAnnotation());
-    }
-  }
-
-  void OpenSubscription(int connection_id,
-                        std::string subscription_id,
-                        bool browser_events) {
-    if (!server_) {
-      return;
-    }
-    subscriptions_[connection_id] =
-        Subscription{std::move(subscription_id), browser_events};
-    const Subscription& subscription = subscriptions_[connection_id];
-    base::DictValue params;
-    base::DictValue notifications;
-    base::ListValue resources;
-    if (browser_events) {
-      resources.Append("chromium-mcp://browser/events");
-    }
-    notifications.Set("resourceSubscriptions", std::move(resources));
-    params.Set("notifications", std::move(notifications));
-    SendSubscriptionMessage(connection_id,
-                            "notifications/subscriptions/acknowledged",
-                            std::move(params), subscription.id);
-  }
-
-  bool CloseSubscription(int connection_id) {
-    return subscriptions_.erase(connection_id) != 0;
-  }
-
-  void SendResourceUpdated(std::string_view uri) {
-    for (const auto& [connection_id, subscription] : subscriptions_) {
-      if (!subscription.browser_events) {
-        continue;
-      }
-      base::DictValue params;
-      params.Set("uri", uri);
-      SendSubscriptionMessage(connection_id, "notifications/resources/updated",
-                              std::move(params), subscription.id);
-    }
-  }
-
- private:
-  void SendEvent(int connection_id, std::string_view notification) {
-    const std::string payload =
-        base::StrCat({"event: message\ndata: ", notification, "\n\n"});
-    const std::string chunk =
-        base::StringPrintf("%zx\r\n%s\r\n", payload.size(), payload.c_str());
-    server_->SendRaw(connection_id, chunk, GetTrafficAnnotation());
-  }
-
-  void SendSubscriptionMessage(int connection_id,
-                               std::string_view method,
-                               base::DictValue params,
-                               std::string_view subscription_id) {
-    base::DictValue message;
-    message.Set("jsonrpc", "2.0");
-    message.Set("method", method);
-    message.Set("params", std::move(params));
-    base::DictValue meta;
-    meta.Set("io.modelcontextprotocol/subscriptionId", subscription_id);
-    message.Set("_meta", std::move(meta));
-    SendEvent(connection_id,
-              base::WriteJson(base::Value(std::move(message))).value_or("{}"));
-  }
-
-  friend class base::RefCountedThreadSafe<BrowserAgentMcpServerState>;
-  ~BrowserAgentMcpServerState() = default;
-
-  raw_ptr<net::HttpServer> server_ = nullptr;
-  struct Subscription {
-    std::string id;
-    bool browser_events;
-  };
-  std::map<int, Subscription> subscriptions_;
-};
-
-namespace {
 
 constexpr char kProtocolVersionHeader[] = "mcp-protocol-version";
 constexpr char kMethodHeader[] = "mcp-method";
@@ -275,9 +165,8 @@ std::optional<std::string> DecodeMcpName(std::string value) {
   constexpr std::string_view kPrefix = "=?base64?";
   constexpr std::string_view kSuffix = "?=";
   if (!value.starts_with(kPrefix) || !value.ends_with(kSuffix)) {
-    if ((!value.empty() &&
-         (value.front() == ' ' || value.front() == '\t' ||
-          value.back() == ' ' || value.back() == '\t')) ||
+    if ((!value.empty() && (value.front() == ' ' || value.front() == '\t' ||
+                            value.back() == ' ' || value.back() == '\t')) ||
         !base::IsStringASCII(value) ||
         std::ranges::any_of(value, [](unsigned char character) {
           return (character < 0x20 && character != '\t') || character > 0x7e;
@@ -287,14 +176,37 @@ std::optional<std::string> DecodeMcpName(std::string value) {
     return value;
   }
   std::string decoded;
-  const std::string_view encoded =
-      std::string_view(value).substr(kPrefix.size(),
-                                     value.size() - kPrefix.size() -
-                                         kSuffix.size());
+  const std::string_view encoded = std::string_view(value).substr(
+      kPrefix.size(), value.size() - kPrefix.size() - kSuffix.size());
   if (!base::Base64Decode(encoded, &decoded)) {
     return std::nullopt;
   }
   return decoded;
+}
+
+bool IsValidListenFilter(const base::DictValue* notifications) {
+  if (!notifications) {
+    return false;
+  }
+  for (const auto [name, value] : *notifications) {
+    if (name == "resourceSubscriptions") {
+      const base::ListValue* resources = value.GetIfList();
+      if (!resources ||
+          !std::ranges::all_of(*resources, [](const base::Value& uri) {
+            return uri.is_string() && !uri.GetString().empty();
+          })) {
+        return false;
+      }
+    } else if (name == "toolsListChanged" || name == "promptsListChanged" ||
+               name == "resourcesListChanged") {
+      if (!value.is_bool()) {
+        return false;
+      }
+    } else {
+      return false;
+    }
+  }
+  return true;
 }
 
 constexpr char kBrowserEventsUri[] = "chromium-mcp://browser/events";
@@ -340,6 +252,34 @@ BrowserAgentMcpServer::~BrowserAgentMcpServer() {
 
 void BrowserAgentMcpServer::OnProfileWillBeDestroyed(Profile* profile) {
   profile->RemoveObserver(this);
+  destroying_context_profiles_.insert(profile);
+  ui_task_runner_->PostTask(
+      FROM_HERE,
+      base::BindOnce(&BrowserAgentMcpServer::ForgetDestroyedContextProfile,
+                     weak_factory_.GetWeakPtr(), profile));
+  std::set<std::string> removed_context_ids;
+  for (const auto& [context_id, registered_profile] : context_handles_) {
+    if (registered_profile == profile) {
+      removed_context_ids.insert(context_id);
+    }
+  }
+  for (const std::string& context_id : removed_context_ids) {
+    owned_context_ids_.erase(context_id);
+    pending_context_destructions_.erase(context_id);
+    context_accept_languages_.erase(context_id);
+  }
+  std::erase_if(page_context_ids_, [&](const auto& entry) {
+    if (!removed_context_ids.contains(entry.second)) {
+      return false;
+    }
+    page_handles_.erase(entry.first);
+    console_observers_.erase(entry.first);
+    event_page_snapshot_.erase(entry.first);
+    std::erase_if(frame_handles_, [&](const auto& frame_entry) {
+      return frame_entry.second.first == entry.first;
+    });
+    return true;
+  });
   std::erase_if(context_handles_, [profile](const auto& entry) {
     return entry.second == profile;
   });
@@ -489,20 +429,22 @@ void BrowserAgentMcpServer::OnHttpRequest(
   }
   const base::DictValue& request = value->GetDict();
   const base::Value* request_id = request.Find("id");
-  const bool valid_id = request_id &&
-                        (request_id->is_string() || request_id->is_int() ||
-                         request_id->is_double());
+  const bool valid_id =
+      request_id && (request_id->is_string() || request_id->is_int() ||
+                     request_id->is_double());
   base::Value error_id = valid_id ? request_id->Clone() : base::Value();
   const std::string* jsonrpc = request.FindString("jsonrpc");
   const std::string* method = request.FindString("method");
   const base::DictValue* params = request.FindDict("params");
-  const base::DictValue* metadata = params ? params->FindDict("_meta") : nullptr;
+  const base::DictValue* metadata =
+      params ? params->FindDict("_meta") : nullptr;
   const std::string* body_version =
       metadata ? metadata->FindString("io.modelcontextprotocol/protocolVersion")
                : nullptr;
   const base::DictValue* client_capabilities =
-      metadata ? metadata->FindDict("io.modelcontextprotocol/clientCapabilities")
-               : nullptr;
+      metadata
+          ? metadata->FindDict("io.modelcontextprotocol/clientCapabilities")
+          : nullptr;
   const base::DictValue* client_info =
       metadata ? metadata->FindDict("io.modelcontextprotocol/clientInfo")
                : nullptr;
@@ -512,18 +454,23 @@ void BrowserAgentMcpServer::OnHttpRequest(
                               "Invalid JSON-RPC request."));
     return;
   }
-  if (!metadata || !body_version || !client_capabilities ||
+  if (!metadata || !body_version || body_version->empty() ||
+      !client_capabilities ||
       (metadata->Find("io.modelcontextprotocol/clientCapabilities") &&
-       !metadata->Find("io.modelcontextprotocol/clientCapabilities")->is_dict()) ||
+       !metadata->Find("io.modelcontextprotocol/clientCapabilities")
+            ->is_dict()) ||
       (metadata->Find("io.modelcontextprotocol/clientInfo") &&
        (!client_info || !client_info->FindString("name") ||
-        !client_info->FindString("version")))) {
+        client_info->FindString("name")->empty() ||
+        !client_info->FindString("version") ||
+        client_info->FindString("version")->empty()))) {
     SendJson(connection_id, net::HTTP_BAD_REQUEST,
              MakeJsonRpcError(error_id.Clone(), -32602,
                               "Missing or malformed request metadata."));
     return;
   }
-  const std::string header_version = info.GetHeaderValue(kProtocolVersionHeader);
+  const std::string header_version =
+      info.GetHeaderValue(kProtocolVersionHeader);
   if (header_version.empty() || info.GetHeaderValue(kMethodHeader).empty()) {
     SendJson(connection_id, net::HTTP_BAD_REQUEST,
              MakeProtocolError(error_id.Clone(), -32020,
@@ -584,16 +531,21 @@ void BrowserAgentMcpServer::OnHttpRequest(
   if (*method == "subscriptions/listen") {
     const base::DictValue* notification_filter =
         params->FindDict("notifications");
+    if (!IsValidListenFilter(notification_filter)) {
+      SendJson(connection_id, net::HTTP_BAD_REQUEST,
+               MakeJsonRpcError(error_id.Clone(), -32602,
+                                "Invalid subscriptions/listen filter."));
+      return;
+    }
     const base::ListValue* resources =
-        notification_filter
-            ? notification_filter->FindList("resourceSubscriptions")
-            : nullptr;
+        notification_filter->FindList("resourceSubscriptions");
     const std::string accept =
         base::ToLowerASCII(info.GetHeaderValue("accept"));
     if (accept.find("text/event-stream") == std::string::npos) {
       SendJson(connection_id, net::HTTP_NOT_ACCEPTABLE,
-               MakeJsonRpcError(error_id.Clone(), -32602,
-                                "subscriptions/listen requires an SSE Accept header."));
+               MakeJsonRpcError(
+                   error_id.Clone(), -32602,
+                   "subscriptions/listen requires an SSE Accept header."));
       return;
     }
     net::HttpServerResponseInfo response(net::HTTP_OK);
@@ -602,11 +554,12 @@ void BrowserAgentMcpServer::OnHttpRequest(
     response.AddHeader("X-Accel-Buffering", "no");
     response.AddHeader("Connection", "keep-alive");
     response.AddHeader("Transfer-Encoding", "chunked");
-    http_server_->SendResponse(connection_id, response, GetTrafficAnnotation());
+    http_server_->SendResponse(connection_id, response,
+                               GetBrowserAgentMcpTrafficAnnotation());
     bool observes_browser_events = false;
     if (resources) {
-      observes_browser_events = std::ranges::any_of(
-          *resources, [](const base::Value& uri) {
+      observes_browser_events =
+          std::ranges::any_of(*resources, [](const base::Value& uri) {
             return uri.is_string() && uri.GetString() == kBrowserEventsUri;
           });
     }

@@ -13,10 +13,14 @@ below.**
 [TOC]
 
 ### Chromium MCP Agent Browser
+*   [Development and Use Guide](CHROMIUM_MCP_DEVELOPMENT.md) - Linux setup,
+    builds, checks, tests, client connections, and packaging status
 *   [Agent Browser Specification](CHROMIUM_MCP_AGENT_BROWSER_SPEC.md)
 *   [Agent Browser TODO](CHROMIUM_MCP_AGENT_BROWSER_TODO.md)
 *   [Remediation Specification](CHROMIUM_MCP_AGENT_BROWSER_REMEDIATION_SPEC.md)
 *   [Remediation TODO](CHROMIUM_MCP_AGENT_BROWSER_REMEDIATION_TODO.md)
+*   [Review Follow-up Specification](CHROMIUM_MCP_AGENT_BROWSER_REVIEW_FOLLOWUP_SPEC.md)
+*   [Review Follow-up TODO](CHROMIUM_MCP_AGENT_BROWSER_REVIEW_FOLLOWUP_TODO.md)
 *   [Tool Contract](TOOL_CONTRACT.md)
 *   [Test Plan](TEST_PLAN.md)
 

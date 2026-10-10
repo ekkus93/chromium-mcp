@@ -6220,9 +6220,24 @@ ChromeContentBrowserClient::CreateURLLoaderThrottles(
     auto event_callback =
         agent_service->CreateNetworkEventCallback(wc_getter.Run());
     if (event_callback) {
+      auto eligibility_callback = base::BindRepeating(
+          [](base::WeakPtr<Profile> profile,
+             base::RepeatingCallback<content::WebContents*()> wc_getter,
+             base::OnceCallback<void(bool)> reply) {
+            auto* service =
+                profile
+                    ? browser_agent::BrowserAgentServiceFactory::GetForProfile(
+                          profile.get())
+                    : nullptr;
+            content::WebContents* contents = wc_getter.Run();
+            std::move(reply).Run(
+                service && contents &&
+                !service->CreateNetworkEventCallback(contents).is_null());
+          },
+          profile->GetWeakPtr(), wc_getter);
       result.push_back(
           std::make_unique<browser_agent::BrowserAgentNetworkThrottle>(
-              std::move(event_callback)));
+              std::move(event_callback), std::move(eligibility_callback)));
     }
   }
 
