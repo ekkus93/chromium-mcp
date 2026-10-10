@@ -75,7 +75,8 @@ environment-specific cases.
 ## Start the MCP server
 
 Use a dedicated user-data directory so this test instance does not attach to an
-existing browser profile. Choose a fixed port for client configuration; this
+existing browser profile. Chromium creates the directory on first launch if it
+does not already exist. Choose a fixed port for client configuration; this
 example uses `17373`:
 
 ```sh
