@@ -87,6 +87,23 @@ The token is a credential. Do not paste it into source files, check it into
 Git, or share it. Keep the terminal with the exported variable open and start
 Codex from that same terminal so it inherits the token.
 
+Codex CLI may connect through a shared app-server daemon that was started
+before this token was exported. In that case, starting `codex` from this
+terminal can reuse the old daemon, and `/mcp` may show
+`chromium_agent_browser` with **0 tools**. Save any active Codex work, then
+restart the daemon from this terminal so it inherits the token:
+
+```sh
+codex app-server daemon stop
+codex app-server daemon start
+codex
+```
+
+Stopping the daemon disconnects its active Codex sessions. After it starts,
+check `/mcp` again; the Chromium entry should list its tools. `codex mcp list`
+only confirms that the server is configured, so use `/mcp` to confirm that
+Codex loaded the tools.
+
 ## Configure Codex
 
 Add this entry to `~/.codex/config.toml`:
@@ -121,6 +138,9 @@ If you selected a different port when starting Chromium, change the URL in
   `--enable-browser-agent-service` were passed to the AppImage.
 - **Codex reports a missing token environment variable:** Start Codex from the
   terminal where `CHROMIUM_MCP_TOKEN` was exported.
+- **Codex shows `chromium_agent_browser` with 0 tools:** The shared app-server
+  daemon may have started before the token was exported. Follow the daemon
+  restart steps above, then check `/mcp` again.
 - **The browser opened without MCP:** Start another instance with the command
   in this guide. MCP must be enabled when Chromium starts.
 - **`No usable sandbox` on Ubuntu 24.04:** Use the helper in the Ubuntu

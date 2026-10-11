@@ -157,10 +157,23 @@ url = "http://127.0.0.1:17373/mcp"
 bearer_token_env_var = "CHROMIUM_MCP_TOKEN"
 ```
 
-Run `codex mcp list` or `/mcp` in the Codex TUI to check its connection. For
-example, ask Codex: “Call `browser.version` and summarize the Chromium build
-metadata.” See the official [Codex MCP guide](https://developers.openai.com/codex/mcp)
-for current configuration options.
+Run `codex mcp list` to check that the server is configured, and `/mcp` in the
+Codex TUI to check that its tools loaded. If `chromium_agent_browser` appears
+with 0 tools, Codex may be reusing a shared app-server daemon that started
+before `CHROMIUM_MCP_TOKEN` was exported. Save active Codex work, then stop and
+restart the daemon from the terminal where the token is exported before
+launching Codex:
+
+```sh
+codex app-server daemon stop
+codex app-server daemon start
+codex
+```
+
+Stopping the daemon disconnects its active Codex sessions. For example, ask
+Codex: “Call `browser.version` and summarize the Chromium build metadata.” See
+the official [Codex MCP guide](https://developers.openai.com/codex/mcp) for
+current configuration options.
 
 ## Connect Claude Code
 
