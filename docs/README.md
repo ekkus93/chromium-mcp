@@ -15,6 +15,8 @@ below.**
 ### Chromium MCP Agent Browser
 *   [Development and Use Guide](CHROMIUM_MCP_DEVELOPMENT.md) - Linux setup,
     builds, checks, tests, client connections, and packaging status
+*   [AppImage and Codex Guide](CHROMIUM_MCP_APPIMAGE_CODEX.md) - launch the
+    local AppImage with MCP enabled and connect Codex
 *   [Agent Browser Specification](CHROMIUM_MCP_AGENT_BROWSER_SPEC.md)
 *   [Agent Browser TODO](CHROMIUM_MCP_AGENT_BROWSER_TODO.md)
 *   [Remediation Specification](CHROMIUM_MCP_AGENT_BROWSER_REMEDIATION_SPEC.md)

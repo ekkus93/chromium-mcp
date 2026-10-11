@@ -195,4 +195,6 @@ This repository does not currently maintain an AppImage build or release
 recipe. The supported local development artifact documented here is the
 Chromium binary at `out/Default/chrome`; it is not a packaged AppImage.
 Distribution packaging needs a separately maintained recipe and validation
-for the target Linux distributions.
+for the target Linux distributions. For instructions to use a locally built
+AppImage with MCP and Codex, see the
+[AppImage and Codex guide](CHROMIUM_MCP_APPIMAGE_CODEX.md).

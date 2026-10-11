@@ -11,10 +11,14 @@ Linux; it is disabled unless explicitly enabled at startup.
 Start with the [Chromium MCP development guide](docs/CHROMIUM_MCP_DEVELOPMENT.md)
 for checkout prerequisites, development setup, build and test commands, MCP
 client configuration, and packaging status.
+For local AppImage instructions, see the
+[AppImage and Codex guide](docs/CHROMIUM_MCP_APPIMAGE_CODEX.md).
 
 Project references:
 
 - [Tool Contract](docs/TOOL_CONTRACT.md) — available tools and their behavior.
+- [AppImage and Codex guide](docs/CHROMIUM_MCP_APPIMAGE_CODEX.md) — launch the
+  local AppImage with MCP enabled and connect Codex.
 - [Security Model](docs/SECURITY_MODEL.md) — endpoint, token, profile, and
   browser security boundaries.
 - [Test Plan](docs/TEST_PLAN.md) — focused validation and integration suites.
