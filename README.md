@@ -6,7 +6,9 @@ This Chromium fork adds an opt-in MCP server inside the browser process. It
 exposes browser, context, page, storage, accessibility, network, download, and
 input tools through Chromium's native APIs. It does not use CDP, Playwright, or
 a separate MCP sidecar. The feature is experimental and currently qualified on
-Linux; it is disabled unless explicitly enabled at startup.
+Linux; testing has been limited to Ubuntu 24.04 LTS. Other Linux distributions
+and operating systems are unverified. The feature is disabled unless explicitly
+enabled at startup.
 
 Start with the [Chromium MCP development guide](docs/CHROMIUM_MCP_DEVELOPMENT.md)
 for checkout prerequisites, development setup, build and test commands, MCP
