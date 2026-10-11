@@ -41,6 +41,35 @@ If you already opened the AppImage normally, that existing browser process
 does not have MCP enabled. Run the command above to open a browser with MCP
 enabled; it uses the separate `chromium-mcp-profile` profile.
 
+### Ubuntu 24.04 and AppArmor
+
+On Ubuntu 24.04, AppArmor may block the unprivileged user namespaces Chromium
+uses for its Linux sandbox. Chromium then exits with `No usable sandbox` before
+the MCP server starts. Do not add `--no-sandbox`; run the helper below from a
+terminal inside your graphical desktop session instead. It extracts the
+AppImage under `~/.local/opt/chromium-mcp`, installs an AppArmor profile that
+allows the required user namespaces for that extracted Chromium binary, and
+starts it with the MCP switches above. `sudo` is needed to install the
+system-wide AppArmor profile.
+
+From the repository checkout:
+
+```sh
+./tools/chromium-mcp-appimage.sh
+```
+
+Or pass the AppImage path explicitly:
+
+```sh
+./tools/chromium-mcp-appimage.sh /path/to/Chromium-MCP-x86_64.AppImage
+```
+
+The script checks for a graphical display and refreshes the extraction when
+the AppImage changes. Leave the terminal running while Codex connects. If the
+script reports that no graphical display is available, open a terminal in the
+Ubuntu desktop session and run it there; a remote shell without the desktop's
+display authorization cannot start the browser window.
+
 ## Load the endpoint token
 
 After the browser starts, open a second terminal. Read the endpoint and token
@@ -94,6 +123,8 @@ If you selected a different port when starting Chromium, change the URL in
   terminal where `CHROMIUM_MCP_TOKEN` was exported.
 - **The browser opened without MCP:** Start another instance with the command
   in this guide. MCP must be enabled when Chromium starts.
+- **`No usable sandbox` on Ubuntu 24.04:** Use the helper in the Ubuntu
+  AppArmor section above. Do not use `--no-sandbox` for normal browsing.
 
 For the protocol details and complete tool catalog, see the
 [Tool Contract](TOOL_CONTRACT.md). For setup using the built `chrome` binary,

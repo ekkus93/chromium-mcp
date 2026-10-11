@@ -17,6 +17,8 @@ below.**
     builds, checks, tests, client connections, and packaging status
 *   [AppImage and Codex Guide](CHROMIUM_MCP_APPIMAGE_CODEX.md) - launch the
     local AppImage with MCP enabled and connect Codex
+*   [AppImage and Claude Code Guide](CHROMIUM_MCP_APPIMAGE_CLAUDE_CODE.md) -
+    launch the local AppImage with MCP enabled and connect Claude Code
 *   [Agent Browser Specification](CHROMIUM_MCP_AGENT_BROWSER_SPEC.md)
 *   [Agent Browser TODO](CHROMIUM_MCP_AGENT_BROWSER_TODO.md)
 *   [Remediation Specification](CHROMIUM_MCP_AGENT_BROWSER_REMEDIATION_SPEC.md)
