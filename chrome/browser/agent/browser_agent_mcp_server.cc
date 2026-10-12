@@ -209,6 +209,12 @@ bool IsValidListenFilter(const base::DictValue* notifications) {
   return true;
 }
 
+bool IsSupportedHandshakeProtocolVersion(std::string_view version) {
+  return version == "2024-11-05" || version == "2025-03-26" ||
+         version == "2025-06-18" || version == "2025-11-25" ||
+         version == protocol::kMcpProtocolVersion;
+}
+
 constexpr char kBrowserEventsUri[] = "chromium-mcp://browser/events";
 
 }  // namespace
@@ -436,6 +442,15 @@ void BrowserAgentMcpServer::OnHttpRequest(
   const std::string* jsonrpc = request.FindString("jsonrpc");
   const std::string* method = request.FindString("method");
   const base::DictValue* params = request.FindDict("params");
+  const bool is_initialized_notification =
+      jsonrpc && *jsonrpc == "2.0" && method &&
+      *method == "notifications/initialized" && !request.Find("id");
+  if (is_initialized_notification) {
+    // The legacy MCP lifecycle requires this notification after initialize.
+    // It has no response body and creates no session in this stateless server.
+    server_state_->Send(connection_id, net::HTTP_ACCEPTED, "");
+    return;
+  }
   const base::DictValue* metadata =
       params ? params->FindDict("_meta") : nullptr;
   const std::string* body_version =
@@ -448,11 +463,82 @@ void BrowserAgentMcpServer::OnHttpRequest(
   const base::DictValue* client_info =
       metadata ? metadata->FindDict("io.modelcontextprotocol/clientInfo")
                : nullptr;
+  const std::string* client_info_name =
+      client_info ? client_info->FindString("name") : nullptr;
+  const std::string* client_info_version =
+      client_info ? client_info->FindString("version") : nullptr;
+  const bool has_valid_client_info =
+      !metadata || !metadata->Find("io.modelcontextprotocol/clientInfo") ||
+      (client_info_name && !client_info_name->empty() && client_info_version &&
+       !client_info_version->empty());
   if (!jsonrpc || *jsonrpc != "2.0" || !valid_id || !method || !params) {
     SendJson(connection_id, net::HTTP_BAD_REQUEST,
              MakeJsonRpcError(error_id.Clone(), -32600,
                               "Invalid JSON-RPC request."));
     return;
+  }
+  const bool is_legacy_initialize = *method == "initialize";
+  const bool has_stateless_metadata =
+      metadata && body_version && !body_version->empty() &&
+      client_capabilities && has_valid_client_info;
+  const bool is_legacy_request =
+      !has_stateless_metadata || is_legacy_initialize;
+  if (is_legacy_initialize) {
+    const std::string* requested_version =
+        params->FindString("protocolVersion");
+    const base::DictValue* capabilities = params->FindDict("capabilities");
+    const base::DictValue* initialize_client_info =
+        params->FindDict("clientInfo");
+    if (!requested_version ||
+        !IsSupportedHandshakeProtocolVersion(*requested_version) ||
+        !capabilities || !initialize_client_info ||
+        !initialize_client_info->FindString("name") ||
+        !initialize_client_info->FindString("version")) {
+      SendJson(connection_id, net::HTTP_BAD_REQUEST,
+               MakeJsonRpcError(error_id.Clone(), -32602,
+                                "Invalid MCP initialize parameters."));
+      return;
+    }
+    base::DictValue response;
+    response.Set("jsonrpc", "2.0");
+    response.Set("id", error_id.Clone());
+    base::DictValue result;
+    result.Set("protocolVersion", *requested_version);
+    base::DictValue server_capabilities;
+    server_capabilities.Set("tools", base::DictValue());
+    result.Set("capabilities", std::move(server_capabilities));
+    base::DictValue server_info;
+    server_info.Set("name", "Chromium Browser");
+    server_info.Set("version", "0.1.0");
+    result.Set("serverInfo", std::move(server_info));
+    result.Set("instructions",
+               "Use Chromium-native browser tools to control this profile.");
+    response.Set("result", std::move(result));
+    SendJson(connection_id, net::HTTP_OK,
+             base::WriteJson(base::Value(std::move(response))).value_or("{}"));
+    return;
+  }
+  if (is_legacy_request) {
+    // Handshake-era clients may omit the per-request metadata or send only
+    // client-specific _meta fields. This server is stateless, so it can serve
+    // those requests without a session.
+    const std::string header_version =
+        info.GetHeaderValue(kProtocolVersionHeader);
+    const std::string header_method = info.GetHeaderValue(kMethodHeader);
+    if ((!header_version.empty() &&
+         !IsSupportedHandshakeProtocolVersion(header_version)) ||
+        (!header_method.empty() && header_method != *method)) {
+      SendJson(connection_id, net::HTTP_BAD_REQUEST,
+               MakeProtocolError(error_id.Clone(), -32022,
+                                 "Unsupported protocol version."));
+      return;
+    }
+    if (*method != "tools/list" && *method != "tools/call" &&
+        *method != "resources/list" && *method != "resources/read") {
+      SendJson(connection_id, net::HTTP_NOT_FOUND,
+               MakeJsonRpcError(error_id.Clone(), -32601, "Method not found."));
+      return;
+    }
   }
   if (!metadata || !body_version || body_version->empty() ||
       !client_capabilities ||
@@ -464,36 +550,59 @@ void BrowserAgentMcpServer::OnHttpRequest(
         client_info->FindString("name")->empty() ||
         !client_info->FindString("version") ||
         client_info->FindString("version")->empty()))) {
-    SendJson(connection_id, net::HTTP_BAD_REQUEST,
-             MakeJsonRpcError(error_id.Clone(), -32602,
-                              "Missing or malformed request metadata."));
-    return;
+    if (!is_legacy_request) {
+      SendJson(connection_id, net::HTTP_BAD_REQUEST,
+               MakeJsonRpcError(error_id.Clone(), -32602,
+                                "Missing or malformed request metadata."));
+      return;
+    }
   }
-  const std::string header_version =
-      info.GetHeaderValue(kProtocolVersionHeader);
-  if (header_version.empty() || info.GetHeaderValue(kMethodHeader).empty()) {
-    SendJson(connection_id, net::HTTP_BAD_REQUEST,
-             MakeProtocolError(error_id.Clone(), -32020,
-                               "Required MCP request headers are missing."));
-    return;
-  }
-  if (*body_version != header_version ||
-      info.GetHeaderValue(kMethodHeader) != *method) {
-    SendJson(connection_id, net::HTTP_BAD_REQUEST,
-             MakeProtocolError(error_id.Clone(), -32020,
-                               "MCP request headers do not match the body."));
-    return;
-  }
-  if (*body_version != protocol::kMcpProtocolVersion) {
-    base::DictValue error_data;
-    base::ListValue supported_versions;
-    supported_versions.Append(protocol::kMcpProtocolVersion);
-    error_data.Set("supportedVersions", std::move(supported_versions));
-    SendJson(connection_id, net::HTTP_BAD_REQUEST,
-             MakeProtocolError(error_id.Clone(), -32022,
-                               "Unsupported protocol version.",
-                               std::move(error_data)));
-    return;
+  if (is_legacy_request) {
+    if (*method == "tools/call") {
+      const std::string* tool_name = params->FindString("name");
+      if (!tool_name || tool_name->empty()) {
+        SendJson(connection_id, net::HTTP_BAD_REQUEST,
+                 MakeJsonRpcError(error_id.Clone(), -32602,
+                                  "Tool name is required."));
+        return;
+      }
+    }
+    if (*method == "resources/read") {
+      const std::string* resource_uri = params->FindString("uri");
+      if (!resource_uri || resource_uri->empty()) {
+        SendJson(connection_id, net::HTTP_BAD_REQUEST,
+                 MakeJsonRpcError(error_id.Clone(), -32602,
+                                  "Resource URI is required."));
+        return;
+      }
+    }
+  } else {
+    const std::string header_version =
+        info.GetHeaderValue(kProtocolVersionHeader);
+    if (header_version.empty() || info.GetHeaderValue(kMethodHeader).empty()) {
+      SendJson(connection_id, net::HTTP_BAD_REQUEST,
+               MakeProtocolError(error_id.Clone(), -32020,
+                                 "Required MCP request headers are missing."));
+      return;
+    }
+    if (*body_version != header_version ||
+        info.GetHeaderValue(kMethodHeader) != *method) {
+      SendJson(connection_id, net::HTTP_BAD_REQUEST,
+               MakeProtocolError(error_id.Clone(), -32020,
+                                 "MCP request headers do not match the body."));
+      return;
+    }
+    if (*body_version != protocol::kMcpProtocolVersion) {
+      base::DictValue error_data;
+      base::ListValue supported_versions;
+      supported_versions.Append(protocol::kMcpProtocolVersion);
+      error_data.Set("supportedVersions", std::move(supported_versions));
+      SendJson(connection_id, net::HTTP_BAD_REQUEST,
+               MakeProtocolError(error_id.Clone(), -32022,
+                                 "Unsupported protocol version.",
+                                 std::move(error_data)));
+      return;
+    }
   }
   if (*method != "server/discover" && *method != "tools/list" &&
       *method != "tools/call" && *method != "resources/list" &&
@@ -502,7 +611,7 @@ void BrowserAgentMcpServer::OnHttpRequest(
              MakeJsonRpcError(error_id.Clone(), -32601, "Method not found."));
     return;
   }
-  if (*method == "tools/call") {
+  if (!is_legacy_request && *method == "tools/call") {
     const base::DictValue* call_params = request.FindDict("params");
     const std::string* tool_name =
         call_params ? call_params->FindString("name") : nullptr;
@@ -515,7 +624,7 @@ void BrowserAgentMcpServer::OnHttpRequest(
       return;
     }
   }
-  if (*method == "resources/read") {
+  if (!is_legacy_request && *method == "resources/read") {
     const base::DictValue* read_params = request.FindDict("params");
     const std::string* resource_uri =
         read_params ? read_params->FindString("uri") : nullptr;
