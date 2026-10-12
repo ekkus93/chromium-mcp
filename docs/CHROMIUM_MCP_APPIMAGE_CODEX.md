@@ -150,3 +150,42 @@ For the protocol details and complete tool catalog, see the
 [Tool Contract](TOOL_CONTRACT.md). For setup using the built `chrome` binary,
 Claude Code instructions, tests, and other development commands, see the
 [Chromium MCP Development and Use Guide](CHROMIUM_MCP_DEVELOPMENT.md).
+
+
+## Using a local model
+
+1. Download the LLM
+```sh
+ollama pull fireboi25/qwythos-v2:q4
+```
+
+2. Create the Codex-compatible model with 64K context
+```sh
+cat > /tmp/Modelfile.qwythos-codex <<'EOF'
+FROM fireboi25/qwythos-v2:q4
+PARAMETER num_ctx 65536
+EOF
+
+ollama create qwythos-codex-q4 \
+  -f /tmp/Modelfile.qwythos-codex
+```
+
+This creates the local model qwythos-codex-q4:latest.
+
+3. Run Codex with the local LLM
+This is the command that worked:
+```sh
+codex -m qwythos-codex-q4 \
+  -c 'model_provider="heretic_local"' \
+  -c 'model_providers.heretic_local.name="Local Ollama"' \
+  -c 'model_providers.heretic_local.base_url="http://127.0.0.1:11434/v1"' \
+  -c 'model_providers.heretic_local.wire_api="responses"' \
+  --disable apps
+```
+
+This configuration:
+- Uses your local Ollama server instead of OpenAI's servers.
+- Runs Qwythos V2 Q4 with a 64K context window.
+- Disables the 336 Codex Apps tools that were causing context overflow.
+- Preserves your Chromium MCP server and other configured MCP servers.
+- Doesn't require an OpenAI API key for local inference.
