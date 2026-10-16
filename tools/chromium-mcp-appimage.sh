@@ -16,6 +16,7 @@ fi
 EXTRACT_DIR="$HOME/.local/opt/chromium-mcp"
 APPDIR="$EXTRACT_DIR/squashfs-root"
 PROFILE_FILE="/etc/apparmor.d/chromium-mcp"
+APPARMOR_USERNS_RESTRICTION="/proc/sys/kernel/apparmor_restrict_unprivileged_userns"
 HASH_FILE="$EXTRACT_DIR/.appimage-sha256"
 mkdir -p "$EXTRACT_DIR"
 APPIMAGE_HASH="$(sha256sum "$APPIMAGE" | awk '{print $1}')"
@@ -48,9 +49,17 @@ if [[ "$CHROME_BIN" == *[[:space:]]* ]]; then
   exit 1
 fi
 
-PROFILE_TMP="$(mktemp)"
-trap 'rm -f "$PROFILE_TMP"' EXIT
-cat > "$PROFILE_TMP" <<EOF
+if [[ -r "$APPARMOR_USERNS_RESTRICTION" ]] &&
+    [[ "$(cat "$APPARMOR_USERNS_RESTRICTION")" == 1 ]]; then
+  if [[ ! -r /etc/apparmor.d/abi/4.0 ]]; then
+    printf 'AppArmor is restricting unprivileged user namespaces, but /etc/apparmor.d/abi/4.0 is missing.\n' >&2
+    printf 'Repair or update the AppArmor package for this Ubuntu release, then rerun this script.\n' >&2
+    exit 1
+  fi
+
+  PROFILE_TMP="$(mktemp)"
+  trap 'rm -f "$PROFILE_TMP"' EXIT
+  cat > "$PROFILE_TMP" <<EOF
 abi <abi/4.0>,
 include <tunables/global>
 
@@ -59,11 +68,19 @@ profile chromium-mcp $CHROME_BIN flags=(unconfined) {
 }
 EOF
 
-printf 'Installing AppArmor profile (sudo may prompt for your password) ...\n'
-sudo install -o root -g root -m 0644 "$PROFILE_TMP" "$PROFILE_FILE"
-sudo apparmor_parser -r "$PROFILE_FILE"
-rm -f "$PROFILE_TMP"
-trap - EXIT
+  printf 'Installing AppArmor profile (sudo may prompt for your password) ...\n'
+  sudo install -o root -g root -m 0644 "$PROFILE_TMP" "$PROFILE_FILE"
+  sudo apparmor_parser -r "$PROFILE_FILE"
+  rm -f "$PROFILE_TMP"
+  trap - EXIT
+else
+  if [[ -e "$PROFILE_FILE" ]]; then
+    printf 'Removing the stale Chromium MCP AppArmor profile; this system does not need it.\n'
+    sudo apparmor_parser -R "$PROFILE_FILE" >/dev/null 2>&1 || true
+    sudo rm -f "$PROFILE_FILE"
+  fi
+  printf 'AppArmor user namespace restriction is not enabled; no AppArmor profile is needed.\n'
+fi
 
 if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
   printf 'No graphical display is available in this shell. Open a terminal in your Ubuntu desktop session and rerun this script.\n' >&2

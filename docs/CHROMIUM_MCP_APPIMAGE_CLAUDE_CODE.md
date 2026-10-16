@@ -41,16 +41,20 @@ If you already opened the AppImage normally, that browser process does not
 have MCP enabled. Start another instance with the command above; it uses the
 separate `chromium-mcp-profile` profile.
 
-### Ubuntu 24.04 and AppArmor
+### Ubuntu 22.04 and 24.04: AppArmor
 
-On Ubuntu 24.04, AppArmor may block the unprivileged user namespaces Chromium
-uses for its Linux sandbox. Chromium then exits with `No usable sandbox` before
-the MCP server starts. Do not add `--no-sandbox`; run the helper below from a
-terminal inside your graphical desktop session instead. It extracts the
-AppImage under `~/.local/opt/chromium-mcp`, installs an AppArmor profile that
-allows the required user namespaces for that extracted Chromium binary, and
-starts it with the MCP switches above. `sudo` is needed to install the
-system-wide AppArmor profile.
+Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor by
+default. Chromium needs these namespaces for its Linux sandbox and may exit
+with `No usable sandbox` before the MCP server starts. Ubuntu 22.04 does not
+enable this AppArmor restriction by default, so it normally does not need a
+profile. The helper below checks the active restriction: it installs a
+profile for the extracted Chromium binary when required, and skips profile
+installation when the restriction is off. Do not add `--no-sandbox`.
+
+Run the helper from a terminal inside your graphical desktop session on
+either Ubuntu release. It extracts the AppImage under
+`~/.local/opt/chromium-mcp` and starts Chromium with the MCP switches above.
+On Ubuntu 24.04, `sudo` is needed to install the system-wide AppArmor profile.
 
 From the repository checkout:
 
@@ -67,7 +71,9 @@ Or pass the AppImage path explicitly:
 The script checks for a graphical display and refreshes the extraction when
 the AppImage changes. Leave the terminal running while Claude Code connects.
 If no graphical display is available, run the script from a terminal in the
-desktop session.
+desktop session. If it reports that `/etc/apparmor.d/abi/4.0` is missing while
+user namespace restrictions are enabled, repair or update the system's
+AppArmor package before retrying.
 
 ## Load the endpoint token
 
@@ -128,7 +134,7 @@ again.
   terminal where `CHROMIUM_MCP_TOKEN` was exported.
 - **The browser opened without MCP:** MCP must be enabled when Chromium starts.
   Start it again using the launch command above.
-- **`No usable sandbox` on Ubuntu 24.04:** Use the helper in the Ubuntu
+- **`No usable sandbox` on Ubuntu 22.04 or 24.04:** Use the helper in the
   AppArmor section. Do not use `--no-sandbox` for normal browsing.
 
 For the protocol details and complete tool catalog, see the
