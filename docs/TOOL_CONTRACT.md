@@ -8,12 +8,16 @@
 
 ## Overview
 
-Chromium hosts the MCP server in the browser process and calls its native browser APIs directly. Requests use Streamable HTTP over a loopback endpoint. The server validates MCP requests and tool arguments, then dispatches to Chromium APIs; it does not use CDP, Playwright, or a separate sidecar.
+Chromium hosts the MCP server in the browser process and calls its native browser APIs directly. Requests use Streamable HTTP over a loopback endpoint. The server validates MCP requests and tool arguments, then dispatches to Chromium APIs; it does not use CDP, Playwright, or a separate sidecar for browser control. For Codex and Claude Code AppImage setup, a small stdio bridge starts Chromium and forwards MCP messages to that loopback endpoint; all browser operations still run in Chromium.
 
 ```text
-MCP client -- Streamable HTTP on loopback --> Chromium BrowserAgentService
-                                              |
-                                              +-- native Browser/Profile/WebContents APIs
+Codex / Claude Code -- stdio --> Chromium MCP bridge
+                                      |
+                                      +-- Streamable HTTP on loopback --> Chromium BrowserAgentService
+                                                                           |
+                                                                           +-- native Browser/Profile/WebContents APIs
+
+Other MCP clients ------------------ Streamable HTTP on loopback ---------> Chromium BrowserAgentService
 ```
 
 The tables below list the tools currently registered by `tools/list`. The two tracing tools appear only when `--browser-agent-trace-dir=<directory>` is configured. Tool schemas in the server define each tool's arguments.
@@ -216,6 +220,8 @@ Use standard MCP JSON-RPC envelopes. The server returns standard tool results wi
 ## Runtime and security
 
 The loopback Streamable HTTP endpoint is owned by `BrowserAgentService`. It starts only when the `BrowserAgentService` feature and the explicit `--enable-browser-agent-service` switch are enabled, and a `--browser-agent-mcp-port=<port>` is supplied. Use port `0` to request an available loopback port. Chromium writes the selected endpoint and per-profile bearer token under `<profile>/BrowserAgentRuntime/`.
+
+The AppImage stdio bridge reads the endpoint and token from that protected runtime directory and forwards standard MCP calls over loopback. Browser event streaming through `subscriptions/listen` is available to HTTP clients and is not currently forwarded by the stdio bridge.
 
 Keep the endpoint on loopback and authenticate local clients so web pages cannot invoke it. An authenticated client can control the browser profile and use the full tool surface. Authentication identifies the client; it does not restrict tool capabilities. The browser process validates protocol syntax and tool arguments, but does not add agent-specific permission tiers or approval gates.
 

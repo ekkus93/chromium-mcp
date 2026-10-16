@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+PREPARE_ONLY=0
+if [[ "${1:-}" == "--prepare" ]]; then
+  PREPARE_ONLY=1
+  shift
+fi
+if [[ $# -gt 1 ]]; then
+  printf 'Usage: %s [--prepare] [AppImage]\n' "$0" >&2
+  exit 2
+fi
+
 APPIMAGE="${1:-$PWD/out/Default/Chromium-MCP-x86_64.AppImage}"
 if [[ ! -f "$APPIMAGE" ]]; then
   printf 'AppImage not found: %s\n' "$APPIMAGE" >&2
@@ -80,6 +90,11 @@ else
     sudo rm -f "$PROFILE_FILE"
   fi
   printf 'AppArmor user namespace restriction is not enabled; no AppArmor profile is needed.\n'
+fi
+
+if [[ "$PREPARE_ONLY" == 1 ]]; then
+  printf 'Chromium MCP AppImage is ready for Codex or Claude Code.\n'
+  exit 0
 fi
 
 if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then

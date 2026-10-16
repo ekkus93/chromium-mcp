@@ -20,10 +20,10 @@ For local AppImage instructions, see the
 Project references:
 
 - [Tool Contract](docs/TOOL_CONTRACT.md) — available tools and their behavior.
-- [AppImage and Codex guide](docs/CHROMIUM_MCP_APPIMAGE_CODEX.md) — launch the
-  local AppImage with MCP enabled and connect Codex.
+- [AppImage and Codex guide](docs/CHROMIUM_MCP_APPIMAGE_CODEX.md) — set up
+  one-time Codex registration and automatic Chromium launch.
 - [AppImage and Claude Code guide](docs/CHROMIUM_MCP_APPIMAGE_CLAUDE_CODE.md) —
-  launch the local AppImage with MCP enabled and connect Claude Code.
+  set up one-time Claude Code registration and automatic Chromium launch.
 - [Security Model](docs/SECURITY_MODEL.md) — endpoint, token, profile, and
   browser security boundaries.
 - [Test Plan](docs/TEST_PLAN.md) — focused validation and integration suites.

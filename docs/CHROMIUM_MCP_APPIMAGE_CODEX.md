@@ -13,33 +13,46 @@ out/Default/Chromium-MCP-x86_64.AppImage
 
 The `out/` directory is ignored by Git. The AppImage is a local build artifact,
 so it is not included in a fresh checkout or in the files on GitHub. If yours is
-in a different location, use that path for `APPIMAGE` below. If needed, make it
-executable with `chmod +x /path/to/Chromium-MCP-x86_64.AppImage`.
+in a different location, pass its path to the setup command below. If needed,
+make it executable with `chmod +x /path/to/Chromium-MCP-x86_64.AppImage`.
 
-## Start Chromium with MCP enabled
+## One-time setup
 
-Opening the AppImage normally starts Chromium with MCP disabled. To start the
-MCP server, launch it from a terminal with the feature and runtime switches.
-This uses a dedicated profile, which Chromium creates on first launch:
+The setup command prepares the AppImage and registers Chromium MCP with Codex.
+Codex then launches Chromium automatically when it starts the MCP server; you
+do not need to start Chromium in a separate terminal.
+
+From this repository checkout, run:
 
 ```sh
-APPIMAGE="$PWD/out/Default/Chromium-MCP-x86_64.AppImage"
-MCP_PROFILE="$HOME/.local/share/chromium-mcp-profile"
-"$APPIMAGE" \
-  --user-data-dir="$MCP_PROFILE" \
-  --enable-features=BrowserAgentService \
-  --enable-browser-agent-service \
-  --browser-agent-mcp-port=17373
+./tools/chromium-mcp-setup.sh codex
 ```
 
-Keep this Chromium process running while Codex uses the MCP server. The
-endpoint listens on IPv4 loopback at `127.0.0.1`, port `17373`. Keep Codex on
-the same machine and do not expose the endpoint through a public interface,
-tunnel, or reverse proxy.
+The command expects the AppImage at
+`out/Default/Chromium-MCP-x86_64.AppImage`. To use another location, pass its
+path:
 
-If you already opened the AppImage normally, that existing browser process
-does not have MCP enabled. Run the command above to open a browser with MCP
-enabled; it uses the separate `chromium-mcp-profile` profile.
+```sh
+./tools/chromium-mcp-setup.sh codex /path/to/Chromium-MCP-x86_64.AppImage
+```
+
+The setup prepares the AppImage under `~/.local/opt/chromium-mcp`, installs an
+AppArmor profile if the system requires one, and adds the
+`chromium_agent_browser` MCP entry to Codex's user configuration. On Ubuntu
+24.04, `sudo` may prompt once to install the profile; Ubuntu 22.04 normally
+does not need it. Restart Codex after setup, and run Codex from your graphical
+desktop session so its MCP process can open the Chromium window.
+
+The MCP bridge launches Chromium with a dedicated profile and a dynamic
+loopback port. It reads the short-lived authentication token from the browser
+profile and forwards MCP messages over local stdio, so the token does not need
+to be copied into Codex configuration or exported in a terminal.
+
+In the Codex TUI, use `/mcp` to confirm that `chromium_agent_browser` lists its
+tools. To verify the browser connection, ask Codex to call `browser.version`.
+The default profile is `~/.local/share/chromium-mcp-profile`; set
+`CHROMIUM_MCP_PROFILE_DIR` in the client's environment to use another profile.
+Run setup again after replacing the AppImage to refresh its extracted files.
 
 ### Ubuntu 22.04 and 24.04: AppArmor
 
@@ -47,81 +60,27 @@ Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor by
 default. Chromium needs these namespaces for its Linux sandbox and may exit
 with `No usable sandbox` before the MCP server starts. Ubuntu 22.04 does not
 enable this AppArmor restriction by default, so it normally does not need a
-profile. The helper below checks the active restriction: it installs a
+profile. The setup command checks the active restriction: it installs a
 profile for the extracted Chromium binary when required, and skips profile
-installation when the restriction is off. Do not add `--no-sandbox`.
+installation when the restriction is off. On Ubuntu 24.04, `sudo` may prompt
+once to install the system-wide profile. Do not add `--no-sandbox`.
 
-Run the helper from a terminal inside your graphical desktop session on
-either Ubuntu release. It extracts the AppImage under
-`~/.local/opt/chromium-mcp` and starts Chromium with the MCP switches above.
-On Ubuntu 24.04, `sudo` is needed to install the system-wide AppArmor profile.
-
-From the repository checkout:
-
-```sh
-./tools/chromium-mcp-appimage.sh
-```
-
-Or pass the AppImage path explicitly:
-
-```sh
-./tools/chromium-mcp-appimage.sh /path/to/Chromium-MCP-x86_64.AppImage
-```
-
-The script checks for a graphical display and refreshes the extraction when
-the AppImage changes. Leave the terminal running while Codex connects. If the
-script reports that no graphical display is available, open a terminal in the
-Ubuntu desktop session and run it there; a remote shell without the desktop's
-display authorization cannot start the browser window. If it reports that
-`/etc/apparmor.d/abi/4.0` is missing while user namespace restrictions are
-enabled, repair or update the system's AppArmor package before retrying.
-
-## Connect Codex
-
-After Chromium starts, open a second terminal in the repository checkout and
-run:
-
-```sh
-./tools/chromium-mcp-codex.sh
-```
-
-The launcher reads the endpoint and token from the browser profile, configures
-the Codex MCP entry, exports the token without displaying it, and starts
-Codex. It also restarts an existing Codex app-server daemon so the new process
-receives a changed token or MCP endpoint. Restarting the daemon disconnects any
-Codex sessions using it; rerunning the launcher with the same token preserves
-them. In the Codex TUI, run `/mcp`; the Chromium entry should list its tools. To
-verify the browser connection, ask Codex to call `browser.version`.
-
-The default runtime directory is
-`~/.local/share/chromium-mcp-profile/Default/BrowserAgentRuntime`. Set
-`CHROMIUM_MCP_RUNTIME_DIR` before running the launcher if you chose a different
-Chromium profile. The token is a credential: do not paste it into source files,
-check it into Git, or share it.
-
-The setup can also be run separately with
-`./tools/chromium-mcp-codex.sh setup`; the normal launcher configures Codex
-automatically, so this is optional. The script uses Codex's `mcp` CLI and
-updates only the `chromium_agent_browser` entry if its endpoint changed.
+To configure both Codex and Claude Code in one command, run
+`./tools/chromium-mcp-setup.sh all`.
 
 ## Troubleshooting
 
-- **Codex cannot connect:** Confirm the MCP-enabled browser process is still
-  running, then rerun `./tools/chromium-mcp-codex.sh` to refresh Codex's
-  endpoint and token.
-- **Token file is missing:** The server writes runtime files after startup.
-  Check that both `--enable-features=BrowserAgentService` and
-  `--enable-browser-agent-service` were passed to the AppImage.
-- **Codex reports a missing token environment variable:** Start Codex with
-  `./tools/chromium-mcp-codex.sh` so it loads the token from the running
-  browser's profile.
-- **Codex shows `chromium_agent_browser` with 0 tools:** The shared app-server
-  daemon may have started before the token was loaded. Rerun the launcher; it
-  restarts the daemon before opening Codex.
-- **The browser opened without MCP:** Start another instance with the command
-  in this guide. MCP must be enabled when Chromium starts.
-- **`No usable sandbox` on Ubuntu 22.04 or 24.04:** Use the helper in the
-  AppArmor section above. Do not use `--no-sandbox` for normal browsing.
+- **Codex does not show Chromium tools:** Confirm the visible browser process
+  is still running and restart Codex so it reloads the MCP configuration.
+- **The MCP process fails to start:** Check
+  `~/.local/state/chromium-mcp/chromium-mcp.log` for Chromium startup errors.
+- **The setup command cannot find the AppImage:** Pass its path explicitly as
+  shown above.
+- **`abi/4.0` is missing on Ubuntu 22.04:** Rerun setup from an updated
+  checkout. It removes the obsolete profile written by older helper versions.
+- **`No usable sandbox` on Ubuntu 22.04 or 24.04:** Rerun the setup command
+  to install or refresh the AppArmor profile. Do not use `--no-sandbox` for
+  normal browsing.
 
 For the protocol details and complete tool catalog, see the
 [Tool Contract](TOOL_CONTRACT.md). For setup using the built `chrome` binary,
