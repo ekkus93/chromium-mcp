@@ -68,6 +68,22 @@ once to install the system-wide profile. Do not add `--no-sandbox`.
 To configure both Codex and Claude Code in one command, run
 `./tools/chromium-mcp-setup.sh all`.
 
+## Run Codex with `--yolo`
+
+After the one-time setup above, start Codex with:
+
+```sh
+codex --yolo
+```
+
+Chromium MCP starts automatically when Codex starts its configured MCP server,
+so no separate Chromium MCP command is needed. If you normally start Codex with
+other options, add `--yolo` to that command. For example, append `--yolo` to
+the local model command below.
+
+`--yolo` disables Codex approval prompts and sandboxing for the session. Use it
+only in an environment you have secured for unrestricted command execution.
+
 ## Troubleshooting
 
 - **Codex does not show Chromium tools:** Confirm the visible browser process
